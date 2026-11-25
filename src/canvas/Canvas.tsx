@@ -38,7 +38,10 @@ import { CanvasToolbar } from './CanvasToolbar';
 const nodeTypes = { table: TableNode, region: RegionNode, note: NoteNode, star: StarNode, rings: RingsNode };
 const edgeTypes = { relation: RelationEdge, arc: ArcEdge, notelink: NoteLinkEdge, bundle: BundleEdge };
 
-const detailSelector = (s: ReactFlowState): Detail => (s.transform[2] < 0.42 ? 'compact' : s.transform[2] < 0.75 ? 'keys' : 'full');
+/** The in-between zoom level (keys only, "+ n more" for the rest) is switched off for now: zooming out goes straight from full cards to blocks. */
+const KEYS_DETAIL = false;
+const detailSelector = (s: ReactFlowState): Detail =>
+  s.transform[2] < 0.42 ? 'compact' : KEYS_DETAIL && s.transform[2] < 0.75 ? 'keys' : 'full';
 /** Below this zoom, Atlas shows groups instead of tables. */
 const OVERVIEW_ZOOM = 0.2;
 export const overviewSelector = (s: ReactFlowState) => s.transform[2] < OVERVIEW_ZOOM;
