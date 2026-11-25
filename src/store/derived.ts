@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { diffGhosts, diffMarks, diffSchemas } from '../analysis/diff';
 import { hopDistances, shortestPath } from '../analysis/graph';
 import { lintSchema } from '../analysis/lint';
-import { placeGhosts } from '../layout/ghosts';
+import { CARD_W, cardHeight } from '../layout/geometry';
 import { portalHubs, useStore, type Hub } from './store';
 
 export function useIssues() {
@@ -28,8 +28,7 @@ export function useDiffMarks() {
 
 /**
  * Tables of the loaded version that the drawing lacks (new ones, or removed ones when the drawing
- * is the newer), shown as ghost cards: in the drawing's group they belong with, or where dragged.
- * Their `groupId` is the drawing's group.
+ * is the newer), shown as ghost cards outside any group: in a column right of the drawing, or where dragged.
  */
 export function useDiffGhosts() {
   const diff = useDiff();
@@ -39,16 +38,21 @@ export function useDiffGhosts() {
   const auto = useMemo(() => {
     if (!diff || !base) return null;
     const g = diffGhosts(diff, schema, base.schema, base.newer ? 'current' : 'base');
-    return g.tables.length ? { g, spots: placeGhosts(schema, base.schema, g) } : null;
+    if (!g.tables.length) return null;
+    const spots = new Map<string, { x: number; y: number }>();
+    const x = schema.tables.length ? Math.max(...schema.tables.map((t) => t.x)) + CARD_W + 160 : 0;
+    let y = schema.tables.length ? Math.min(...schema.tables.map((t) => t.y)) : 0;
+    for (const t of g.tables) {
+      spots.set(t.id, { x, y });
+      y += cardHeight(t, base.schema) + 48;
+    }
+    return { g, spots };
   }, [diff, base, schema]);
   return useMemo(() => {
     if (!auto || !base) return null;
     const { g, spots } = auto;
     const placed = new Map<string, (typeof g.tables)[number]>();
-    for (const t of g.tables) {
-      const p = spots.get(t.id)!;
-      placed.set(t.id, { ...t, ...p, ...moved[t.id], groupId: p.groupId });
-    }
+    for (const t of g.tables) placed.set(t.id, { ...t, ...spots.get(t.id)!, ...moved[t.id], groupId: undefined });
     const at = (e: (typeof g.relations)[number]['from']) => (e.ghost ? { ...e, table: placed.get(e.table.id)! } : e);
     return {
       ...g,

@@ -354,11 +354,8 @@ export function Canvas() {
       const members = schema.tables.filter((t) => t.groupId === g.id);
       if (!members.length) continue;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      // the group's ghost cards (tables only the compared version has) sit in its frame too
-      const ghostMembers = ghosts?.tables.filter((t) => t.groupId === g.id) ?? [];
-      for (const t of [...members, ...ghostMembers]) {
-        const ghost = !members.includes(t);
-        const h = measured.get(ghost ? `ghost:${t.id}` : t.id)?.height ?? cardHeight(t, ghost ? ghosts!.schema : schema, detail);
+      for (const t of members) {
+        const h = measured.get(t.id)?.height ?? cardHeight(t, schema, detail);
         x0 = Math.min(x0, t.x);
         y0 = Math.min(y0, t.y);
         x1 = Math.max(x1, t.x + CARD_W);
@@ -440,18 +437,16 @@ export function Canvas() {
       const ghostFks = new Set(ghosts.schema.relations.flatMap((r) => r.from.columns));
       const ghostEnums = new Set(ghosts.schema.enums.map((e) => e.name));
       for (const t of ghosts.tables) {
-        const g = t.groupId ? byGroup.get(t.groupId) : undefined;
         out.push({
           id: `ghost:${t.id}`,
           type: 'table',
           position: { x: t.x, y: t.y },
-          data: { table: t, schema: ghosts.schema, detail, groupColor: g?.color, fkCols: ghostFks, portals: new Map(), enumNames: ghostEnums, diff: ghosts.kind, ghost: true },
+          data: { table: t, schema: ghosts.schema, detail, fkCols: ghostFks, portals: new Map(), enumNames: ghostEnums, diff: ghosts.kind, ghost: true },
           selected: selection?.kind === 'ghost' && selection.id === t.id,
           // selected through the store (the table isn't in the schema), never deleted or linked
           selectable: false,
           connectable: false,
           deletable: false,
-          hidden: overview && !!g,
           measured: measured.get(`ghost:${t.id}`),
         });
       }
@@ -709,8 +704,6 @@ export function Canvas() {
                 t.x = Math.round(t.x + dx);
                 t.y = Math.round(t.y + dy);
               }
-              // its ghost cards come along
-              for (const t of ghosts?.tables ?? []) if (t.groupId === gid) moved[t.id] = { x: Math.round(t.x + dx), y: Math.round(t.y + dy) };
             } else if (c.id.startsWith('ghost:')) {
               // not part of the schema: kept aside, outside the undo history
               moved[c.id.slice(6)] = { x: at(c.position.x), y: at(c.position.y) };
@@ -732,7 +725,7 @@ export function Canvas() {
         if (Object.keys(moved).length) st.set({ ghostPos: { ...useStore.getState().ghostPos, ...moved } });
       }
     },
-    [nodes, view, setStarPos, snap, ghosts],
+    [nodes, view, setStarPos, snap],
   );
 
   const onConnect = useCallback((c: Connection) => {

@@ -605,12 +605,10 @@ function TableInspector({ id, columnId }: { id: string; columnId?: string }) {
 /** A table only the compared version has: shown read-only, since it isn't part of the schema. */
 function GhostInspector({ id, ghosts }: { id: string; ghosts: NonNullable<ReturnType<typeof useDiffGhosts>> }) {
   const base = useStore((s) => s.diffBase);
-  const groups = useStore((s) => s.schema.groups);
   const fly = useFly();
   const [showDDL, setShowDDL] = useState(true);
   const table = ghosts.tables.find((t) => t.id === id)!;
   const other = ghosts.schema;
-  const group = groups.find((g) => g.id === table.groupId);
   const links = ghosts.relations.filter((r) => r.rel.from.table === id || r.rel.to.table === id);
   const outgoing = links.filter((r) => r.rel.from.table === id);
   const incoming = links.filter((r) => r.rel.from.table !== id);
@@ -630,14 +628,7 @@ function GhostInspector({ id, ghosts }: { id: string; ghosts: NonNullable<Return
           <span className={`badge badge-${ghosts.kind}`}>{ghosts.kind === 'added' ? 'new' : 'removed'}</span>
         </div>
         <p className="muted small">
-          Only in <b>{base?.name}</b>, the {ghosts.kind === 'added' ? 'newer' : 'older'} version: shown for the comparison, not part of this schema
-          {group && (
-            <>
-              {' '}
-              (with the <b>{group.name}</b> group)
-            </>
-          )}
-          .
+          Only in <b>{base?.name}</b>, the {ghosts.kind === 'added' ? 'newer' : 'older'} version: shown for the comparison, not part of this schema.
         </p>
         {table.comment && <p className="small">{table.comment}</p>}
 

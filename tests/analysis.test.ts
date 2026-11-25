@@ -4,8 +4,6 @@ import { describe, expect, it } from 'vitest';
 import { diffGhosts, diffMarks, diffSchemas, migrationSql } from '../src/analysis/diff';
 import { joinSql, shortestPath } from '../src/analysis/graph';
 import { lintSchema } from '../src/analysis/lint';
-import { CARD_W, cardHeight } from '../src/layout/geometry';
-import { placeGhosts } from '../src/layout/ghosts';
 import { generateSql } from '../src/sql/generator';
 import { applyLayout } from '../src/sql/layoutMeta';
 import { parseSql } from '../src/sql/parser';
@@ -105,51 +103,6 @@ describe('diff marks', () => {
     expect(r.kind).toBe('removed');
     expect(r.tables.map((t) => t.name)).toEqual(['old_only']);
     expect(r.relations[0].to.table).toBe(newer.tables[0]);
-  });
-});
-
-describe('ghost placement', () => {
-  // two groups side by side: a, b on the left; x, y on the right
-  const older = parseSql(`
-    CREATE TABLE a (id int PRIMARY KEY);
-    CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a);
-    CREATE TABLE x (id int PRIMARY KEY);
-    CREATE TABLE y (id int PRIMARY KEY, x_id int REFERENCES x);
-  `).schema;
-  older.groups = [
-    { id: 'g1', name: 'Left', color: '#f00' },
-    { id: 'g2', name: 'Right', color: '#0f0' },
-  ];
-  const at = { a: [0, 0, 'g1'], b: [0, 300, 'g1'], x: [1200, 0, 'g2'], y: [1200, 300, 'g2'] } as const;
-  for (const t of older.tables) [t.x, t.y, t.groupId] = at[t.name as keyof typeof at];
-  const newer = parseSql(`
-    CREATE TABLE a (id int PRIMARY KEY);
-    CREATE TABLE b (id int PRIMARY KEY, a_id int REFERENCES a);
-    CREATE TABLE x (id int PRIMARY KEY);
-    CREATE TABLE y (id int PRIMARY KEY, x_id int REFERENCES x);
-    CREATE TABLE b_notes (id int PRIMARY KEY, b_id int REFERENCES b);
-    CREATE TABLE b_note_tags (id int PRIMARY KEY, note_id int REFERENCES b_notes);
-    CREATE TABLE loose (id int PRIMARY KEY);
-  `).schema;
-  const g = diffGhosts(diffSchemas(older, newer), older, newer, 'current');
-  const spots = placeGhosts(older, newer, g);
-  const byName = (n: string) => spots.get(newer.tables.find((t) => t.name === n)!.id)!;
-
-  it('puts a new table in the group of the tables it links to, and its own new links with it', () => {
-    expect(byName('b_notes').groupId).toBe('g1');
-    expect(byName('b_note_tags').groupId).toBe('g1');
-    expect(byName('loose').groupId).toBeUndefined();
-  });
-
-  it('next to them, without covering any card', () => {
-    const rects = [
-      ...older.tables.map((t) => ({ x: t.x, y: t.y, h: cardHeight(t, older) })),
-      ...g.tables.map((t) => ({ ...spots.get(t.id)!, h: cardHeight(t, newer) })),
-    ];
-    for (const [i, r] of rects.entries())
-      for (const o of rects.slice(i + 1)) expect(r.x < o.x + CARD_W && o.x < r.x + CARD_W && r.y < o.y + o.h && o.y < r.y + r.h).toBe(false);
-    // closer to its group than to the other one
-    expect(byName('b_notes').x).toBeLessThan(600);
   });
 });
 
