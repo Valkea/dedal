@@ -682,8 +682,10 @@ function DiffTab() {
               onClick={() => {
                 const own = base.newer ? t.base : t.current; // the side on the canvas
                 if (own) return fly(own.id);
-                // only the compared version has it: go to its ghost card
-                const n = rf.getNode(`ghost:${(t.current ?? t.base)!.id}`);
+                // only the compared version has it: open its ghost card
+                const gid = (t.current ?? t.base)!.id;
+                const n = rf.getNode(`ghost:${gid}`);
+                if (n) useStore.getState().select({ kind: 'ghost', id: gid });
                 if (n) rf.setCenter(n.position.x + CARD_W / 2, n.position.y + (n.measured?.height ?? 0) / 2, { zoom: Math.max(rf.getZoom(), 0.85), duration: 600 });
               }}
             >

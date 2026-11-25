@@ -72,9 +72,9 @@ get the `SELECT … JOIN …` to copy.
 
 Load another version (a file, pasted SQL or a link). It's taken as the older one; if it's the newer,
 press Swap. Changes are marked on the canvas (new, changed or removed, depending on which side the
-drawing is; tables only the loaded version has appear as faded cards beside the drawing), every
-difference is listed, and you get the migration script (`BEGIN; … ALTER TABLE …`)
-from the older to the newer, to copy or download.
+drawing is), every difference is listed, and you get the migration script (`BEGIN; … ALTER TABLE …`)
+from the older to the newer, to copy or download. Tables only the loaded version has appear as faded
+cards in the group they belong with: click one for its details, drag it like any table.
 
 <img src="public/medias/compare.png" alt="Compare: reviews marked NEW and books marked CHANGED on the canvas, with the list of differences and the migration script" width="100%">
 

@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { diffGhosts, diffMarks, diffSchemas } from '../analysis/diff';
 import { hopDistances, shortestPath } from '../analysis/graph';
 import { lintSchema } from '../analysis/lint';
-import { CARD_W, cardHeight } from '../layout/geometry';
+import { placeGhosts } from '../layout/ghosts';
 import { portalHubs, useStore, type Hub } from './store';
 
 export function useIssues() {
@@ -28,22 +28,26 @@ export function useDiffMarks() {
 
 /**
  * Tables of the loaded version that the drawing lacks (new ones, or removed ones when the drawing
- * is the newer), placed in a column right of the drawing so they can be shown as ghost cards.
+ * is the newer), shown as ghost cards: in the drawing's group they belong with, or where dragged.
+ * Their `groupId` is the drawing's group.
  */
 export function useDiffGhosts() {
   const diff = useDiff();
   const schema = useStore((s) => s.schema);
   const base = useStore((s) => s.diffBase);
-  return useMemo(() => {
+  const moved = useStore((s) => s.ghostPos);
+  const auto = useMemo(() => {
     if (!diff || !base) return null;
     const g = diffGhosts(diff, schema, base.schema, base.newer ? 'current' : 'base');
-    if (!g.tables.length) return null;
-    const x = schema.tables.length ? Math.max(...schema.tables.map((t) => t.x)) + CARD_W + 160 : 0;
-    let y = schema.tables.length ? Math.min(...schema.tables.map((t) => t.y)) : 0;
+    return g.tables.length ? { g, spots: placeGhosts(schema, base.schema, g) } : null;
+  }, [diff, base, schema]);
+  return useMemo(() => {
+    if (!auto || !base) return null;
+    const { g, spots } = auto;
     const placed = new Map<string, (typeof g.tables)[number]>();
     for (const t of g.tables) {
-      placed.set(t.id, { ...t, x, y });
-      y += cardHeight(t, base.schema) + 48;
+      const p = spots.get(t.id)!;
+      placed.set(t.id, { ...t, ...p, ...moved[t.id], groupId: p.groupId });
     }
     const at = (e: (typeof g.relations)[number]['from']) => (e.ghost ? { ...e, table: placed.get(e.table.id)! } : e);
     return {
@@ -52,7 +56,7 @@ export function useDiffGhosts() {
       tables: [...placed.values()],
       relations: g.relations.map((r) => ({ ...r, from: at(r.from), to: at(r.to) })),
     };
-  }, [diff, base, schema]);
+  }, [auto, base, moved]);
 }
 
 /** Portal hubs of the Atlas view (none elsewhere), keyed by table id. */

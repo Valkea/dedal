@@ -19,7 +19,7 @@ import type { Column, FkAction, Schema, Table } from '../model/types';
 import { relationDDL, tableDDL } from '../sql/generator';
 import { BUILTIN_TYPES, canonicalType, EXTENSIONS, FK_ACTIONS, isSerial } from '../sql/pg';
 import { parseSql } from '../sql/parser';
-import { useIssues } from '../store/derived';
+import { useDiffGhosts, useIssues } from '../store/derived';
 import { useStore } from '../store/store';
 import { copyText } from '../util/files';
 import { CodeEditor } from './CodeEditor';
@@ -35,8 +35,10 @@ function useFly() {
 
 export function Inspector() {
   const sel = useStore((s) => s.selection);
+  const ghosts = useDiffGhosts();
   const exists = useStore((s) => {
     if (!sel) return false;
+    if (sel.kind === 'ghost') return !!ghosts?.tables.some((t) => t.id === sel.id);
     if (sel.kind === 'table') return s.schema.tables.some((t) => t.id === sel.id);
     if (sel.kind === 'relation') return s.schema.relations.some((t) => t.id === sel.id);
     if (sel.kind === 'note') return s.schema.notes.some((t) => t.id === sel.id);
@@ -50,6 +52,7 @@ export function Inspector() {
       {sel.kind === 'relation' && <RelationInspector id={sel.id} />}
       {sel.kind === 'note' && <NoteInspector id={sel.id} />}
       {sel.kind === 'group' && <GroupInspector id={sel.id} />}
+      {sel.kind === 'ghost' && ghosts && <GhostInspector id={sel.id} ghosts={ghosts} />}
     </aside>
   );
 }
@@ -594,6 +597,120 @@ function TableInspector({ id, columnId }: { id: string; columnId?: string }) {
           </button>
         </div>
         {showDDL && <CodeEditor value={tableDDL(table, schema)} readOnly className="code-small" />}
+      </div>
+    </>
+  );
+}
+
+/** A table only the compared version has: shown read-only, since it isn't part of the schema. */
+function GhostInspector({ id, ghosts }: { id: string; ghosts: NonNullable<ReturnType<typeof useDiffGhosts>> }) {
+  const base = useStore((s) => s.diffBase);
+  const groups = useStore((s) => s.schema.groups);
+  const fly = useFly();
+  const [showDDL, setShowDDL] = useState(true);
+  const table = ghosts.tables.find((t) => t.id === id)!;
+  const other = ghosts.schema;
+  const group = groups.find((g) => g.id === table.groupId);
+  const links = ghosts.relations.filter((r) => r.rel.from.table === id || r.rel.to.table === id);
+  const outgoing = links.filter((r) => r.rel.from.table === id);
+  const incoming = links.filter((r) => r.rel.from.table !== id);
+  const fkCols = new Set(outgoing.flatMap((r) => r.rel.from.columns));
+  const enumNames = new Set(other.enums.map((e) => e.name));
+  // a linked table: the drawn one flies there, another ghost opens instead
+  const open = (end: (typeof links)[number]['to']) =>
+    end.ghost ? useStore.getState().visit(() => useStore.getState().select({ kind: 'ghost', id: end.table.id })) : fly(end.table.id);
+  const ddl = tableDDL(table, other);
+
+  return (
+    <>
+      <Head title="Table" />
+      <div className="inspector-body">
+        <div className="row">
+          <span className="title-input grow ellipsis">{table.name}</span>
+          <span className={`badge badge-${ghosts.kind}`}>{ghosts.kind === 'added' ? 'new' : 'removed'}</span>
+        </div>
+        <p className="muted small">
+          Only in <b>{base?.name}</b>, the {ghosts.kind === 'added' ? 'newer' : 'older'} version: shown for the comparison, not part of this schema
+          {group && (
+            <>
+              {' '}
+              (with the <b>{group.name}</b> group)
+            </>
+          )}
+          .
+        </p>
+        {table.comment && <p className="small">{table.comment}</p>}
+
+        <div className="section-title">
+          Columns <span className="count">{table.columns.length}</span>
+        </div>
+        <div className="cols">
+          {table.columns.map((c) => (
+            <div key={c.id} className="col" title={[c.default && `DEFAULT ${c.default}`, c.check && `CHECK (${c.check})`, c.comment].filter(Boolean).join('\n') || undefined}>
+              <div className="col-row">
+                <span className={`icon-btn sm ${c.pk ? 'pk-on' : 'muted'}`} title={c.pk ? 'Primary key' : undefined}>
+                  <KeyRound size={13} />
+                </span>
+                <span className="mono col-name ellipsis">{c.name}</span>
+                <span className={`mono col-type ellipsis ${fkCols.has(c.id) ? 'is-fk' : enumNames.has(c.type.replace(/\[\]$/, '')) ? 'is-enum' : ''}`}>{c.type}</span>
+                <span className={`flag ${!c.nullable ? 'is-on' : ''}`} title="NOT NULL">NN</span>
+                <span className={`flag ${c.unique ? 'is-on' : ''}`} title="UNIQUE">U</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {outgoing.length > 0 && (
+          <>
+            <div className="section-title">
+              References <span className="count">{outgoing.length}</span>
+            </div>
+            <div className="chips">
+              {outgoing.map((r) => (
+                <button key={r.rel.id} className="chip chip-btn mono" onClick={() => open(r.to)}>
+                  {r.from.column?.name} → {r.to.table.name}.{r.to.column?.name ?? '?'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {incoming.length > 0 && (
+          <>
+            <div className="section-title">
+              Referenced by <span className="count">{incoming.length}</span>
+            </div>
+            <div className="chips">
+              {incoming.map((r) => (
+                <button key={r.rel.id} className="chip chip-btn mono" onClick={() => open(r.from)}>
+                  {r.from.table.name}.{r.from.column?.name ?? '?'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {table.indexes.length > 0 && (
+          <>
+            <div className="section-title">
+              Indexes <span className="count">{table.indexes.length}</span>
+            </div>
+            {table.indexes.map((ix) => (
+              <div key={ix.id} className="mono small">
+                {ix.unique ? 'UNIQUE ' : ''}
+                {ix.name} ({ix.columns.join(', ')})
+              </div>
+            ))}
+          </>
+        )}
+
+        <div className="section-title clickable" onClick={() => setShowDDL(!showDDL)}>
+          {showDDL ? <ChevronDown size={13} /> : <ChevronRight size={13} />} DDL
+          <span className="grow" />
+          <button className="btn sm" onClick={async (e) => { e.stopPropagation(); if (await copyText(ddl)) useStore.getState().toast('DDL copied'); }}>
+            <Copy size={12} /> Copy
+          </button>
+        </div>
+        {showDDL && <CodeEditor value={ddl} readOnly className="code-small" />}
       </div>
     </>
   );

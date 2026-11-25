@@ -22,6 +22,8 @@ export type Selection =
   | { kind: 'note'; id: string }
   | { kind: 'enum'; id: string }
   | { kind: 'group'; id: string }
+  /** A table only the compared version has (id in that version's schema). */
+  | { kind: 'ghost'; id: string }
   | null;
 
 export type SidebarTab = 'tables' | 'enums' | 'extensions' | 'health' | 'diff' | 'paths';
@@ -54,6 +56,8 @@ interface State {
   path: { a?: string; b?: string };
   /** The schema loaded in Compare; it's the older side unless `newer` (then the drawing is the older). */
   diffBase: { name: string; schema: Schema; newer?: boolean } | null;
+  /** Where the tables only the compared version has were dragged, by their id; not part of the schema. */
+  ghostPos: Record<string, { x: number; y: number }>;
   starFocus: string | null;
   portals: boolean;
   /** Tables and notes can't be dragged (default): avoids moving things by accident while panning or tapping. */
@@ -169,6 +173,7 @@ export const useStore = create<State>((set, get) => ({
   focus: { enabled: false, hops: 1 },
   path: {},
   diffBase: null,
+  ghostPos: {},
   starFocus: null,
   portals: false,
   moveLocked: true,
@@ -280,7 +285,7 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       return (e as Error).message;
     }
-    set({ diffBase: { name, schema: base, newer: get().diffBase?.newer }, sidebar: 'diff' });
+    set({ diffBase: { name, schema: base, newer: get().diffBase?.newer }, ghostPos: {}, sidebar: 'diff' });
     const n = diffSchemas(base, get().schema).count;
     get().toast(n ? `Comparing with ${name}: ${n} difference${n > 1 ? 's' : ''} highlighted` : `${name} is identical to the current schema`, n ? 'ok' : 'warn');
     return null;
@@ -450,7 +455,7 @@ export const useStore = create<State>((set, get) => ({
   },
   deleteSelection: () => {
     const sel = get().selection;
-    if (!sel) return;
+    if (!sel || sel.kind === 'ghost') return;
     get().commit((d) => {
       if (sel.kind === 'table') {
         if (sel.columnId) {
