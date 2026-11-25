@@ -47,8 +47,11 @@ const TARGET_ASPECT = 1.7;
 /** Crossings are counted on the deepest zoom: every column drawn, the most rows for lines to cross at. */
 const ARRANGE_DETAIL: Detail = 'full';
 
+/** Score cost of a table hung over its partner instead of under it: outweighs any shape term, so only fewer crossings pay for it. */
+const ABOVE_COST = 1000;
+
 /** Lower is better: crossings dominate, then an elongated or sprawling drawing. */
-function score(schema: Schema, pos: Map<string, Pos>, hidden: Set<string>, detail: Detail): { score: number; crossings: number } {
+function score(schema: Schema, pos: Map<string, Pos>, hidden: Set<string>, detail: Detail, hangs: Hangs = new Map()): { score: number; crossings: number } {
   // rounded like the final drawing: half a pixel can change how lines are routed
   const probe: Schema = {
     ...schema,
@@ -80,14 +83,137 @@ function score(schema: Schema, pos: Map<string, Pos>, hidden: Set<string>, detai
   }
   let framed = 0;
   for (const [fx0, fy0, fx1, fy1] of frames.values()) framed += (fx1 - fx0) * (fy1 - fy0);
-  return { score: crossings + aspect * 10 + sprawl * 1.5 + (framed / Math.max(1, area)) * 1.5, crossings };
+  const hungAbove = hangs.size ? aboveOf(schema, pos, hangs).size : 0;
+  return { score: crossings + aspect * 10 + sprawl * 1.5 + (framed / Math.max(1, area)) * 1.5 + hungAbove * ABOVE_COST, crossings };
+}
+
+/** Table → the one table it hangs under (see `pendants`). */
+type Hangs = Map<string, string>;
+
+/**
+ * Tables linked to a single other table (by drawn lines), each with that table: it goes right under it.
+ * Both sit in the same group, or both outside groups; a locked table stays where it is. Of two tables
+ * linked only to each other, the referencing one hangs under the referenced one.
+ */
+export function pendants(schema: Schema, hidden: Set<string> = new Set()): Hangs {
+  const nbrs = new Map<string, Set<string>>(schema.tables.map((t) => [t.id, new Set()]));
+  const refs = new Set<string>();
+  for (const r of schema.relations) {
+    if (hidden.has(r.id) || r.from.table === r.to.table) continue;
+    nbrs.get(r.from.table)?.add(r.to.table);
+    nbrs.get(r.to.table)?.add(r.from.table);
+    refs.add(`${r.from.table}>${r.to.table}`);
+  }
+  const byId = new Map(schema.tables.map((t) => [t.id, t]));
+  const isLocked = isLockedFn(schema);
+  const out: Hangs = new Map();
+  for (const t of schema.tables) {
+    const n = nbrs.get(t.id)!;
+    if (n.size !== 1 || isLocked(t)) continue;
+    const a = byId.get([...n][0]);
+    if (!a || (a.groupId ?? '') !== (t.groupId ?? '')) continue;
+    if (nbrs.get(a.id)!.size === 1 && !isLocked(a)) {
+      // a pair on its own: one of them has to stay put
+      const mine = refs.has(`${t.id}>${a.id}`);
+      const theirs = refs.has(`${a.id}>${t.id}`);
+      if (!mine || (theirs && t.id < a.id)) continue;
+    }
+    out.set(t.id, a.id);
+  }
+  return out;
+}
+
+/** Hung tables currently over their partner rather than under it. */
+function aboveOf(schema: Schema, pos: Map<string, Pos>, hangs: Hangs): Set<string> {
+  const byId = new Map(schema.tables.map((t) => [t.id, t]));
+  const mid = (id: string) => pos.get(id)!.y + cardHeight(byId.get(id)!, schema) / 2;
+  return new Set([...hangs].filter(([p, a]) => mid(p) < mid(a)).map(([p]) => p));
+}
+
+/** Room between a table and the ones hung under (or over) it. */
+const HANG_GAP = 32;
+
+/**
+ * Put each hung table right under its partner (over it when in `above`), several stacking in turn, and
+ * move the rest of the partner's column in its block down (up) to make room; blocks are pushed apart after.
+ */
+function hang(schema: Schema, pos: Map<string, Pos>, hangs: Hangs, above: Set<string>): Map<string, Pos> {
+  if (!hangs.size) return pos;
+  const heightOf = new Map(schema.tables.map((t) => [t.id, cardHeight(t, schema)]));
+  const h = (id: string) => heightOf.get(id)!;
+  const blockOf = new Map<string, string>();
+  for (const [k, ids] of blocksOf(schema, hangs)) for (const id of ids) blockOf.set(id, k);
+  const byPartner = new Map<string, string[]>();
+  for (const [p, a] of hangs) {
+    if (!byPartner.has(a)) byPartner.set(a, []);
+    byPartner.get(a)!.push(p);
+  }
+  const placed = new Set<string>();
+  let moved = false;
+  // stacks under first, top to bottom, then stacks over, bottom to top: each push only meets tables not yet stacked on
+  for (const up of [false, true]) {
+    const partners = [...byPartner.keys()].sort((a, b) => (pos.get(a)!.y - pos.get(b)!.y) * (up ? -1 : 1));
+    for (const a of partners) {
+      const stack = byPartner.get(a)!.filter((p) => above.has(p) === up);
+      if (!stack.length) continue;
+      const pa = pos.get(a)!;
+      const mid = pa.y + h(a) / 2;
+      // the column beyond the partner: tables of its block that overlap it, or overlap one that does
+      const ahead = schema.tables
+        .map((t) => t.id)
+        .filter((id) => id !== a && blockOf.get(id) === blockOf.get(a) && (!hangs.has(id) || placed.has(id)) && (pos.get(id)!.y + h(id) / 2 < mid) === up);
+      const col: string[] = [];
+      const xs = [pa.x];
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const id of ahead)
+          if (!col.includes(id) && xs.some((x) => Math.abs(pos.get(id)!.x - x) < CARD_W + MIN_GAP_X)) {
+            col.push(id);
+            xs.push(pos.get(id)!.x);
+            grew = true;
+          }
+      }
+      let end = up ? pa.y : pa.y + h(a);
+      for (const p of stack) {
+        const y = up ? end - HANG_GAP - h(p) : end + HANG_GAP;
+        const was = pos.get(p)!;
+        if (Math.abs(was.x - pa.x) > 0.5 || Math.abs(was.y - y) > 0.5) moved = true;
+        pos.set(p, { x: pa.x, y });
+        end = up ? y : y + h(p);
+        placed.add(p);
+      }
+      if (!col.length) continue;
+      const d = up
+        ? Math.min(0, end - HANG_GAP - Math.max(...col.map((id) => pos.get(id)!.y + h(id))))
+        : Math.max(0, end + HANG_GAP - Math.min(...col.map((id) => pos.get(id)!.y)));
+      if (Math.abs(d) < 0.5) continue;
+      moved = true;
+      for (const id of col) pos.get(id)!.y += d;
+    }
+  }
+  if (moved) removeBlockOverlaps(schema, pos, () => false, hangs);
+  return pos;
+}
+
+/** What the arrangement moves as one: each group, and each table outside groups along with the tables hung on it. */
+function blocksOf(schema: Schema, hangs: Hangs = new Map()): Map<string, string[]> {
+  const blocks = new Map<string, string[]>();
+  for (const t of schema.tables) {
+    const k = t.groupId ? `g:${t.groupId}` : (hangs.get(t.id) ?? t.id);
+    if (!blocks.has(k)) blocks.set(k, []);
+    blocks.get(k)!.push(t.id);
+  }
+  return blocks;
 }
 
 export async function autoLayout(schema: Schema, opts: LayoutOptions): Promise<Map<string, Pos>> {
   return (await autoLayoutDetailed(schema, opts)).pos;
 }
 
-/** Try several strategies, polish the most promising ones, and keep the cleanest drawing (never one with more crossings than now). */
+/**
+ * Try several strategies, polish the most promising ones, and keep the cleanest drawing: never one with more
+ * crossings than now, once tables with a single link are hung on their partner (see `pendants`).
+ */
 export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): Promise<LayoutResult> {
   const hidden = opts.hiddenRelations ?? new Set<string>();
   const detail = ARRANGE_DETAIL;
@@ -103,6 +229,7 @@ export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): P
     : schema.groups.length
       ? ['islands-down', 'islands-right', 'islands-stress', 'compound', ...(placed ? (['islands-keep', 'current'] as const) : [])]
       : ['compound', ...(placed ? (['current'] as const) : [])];
+  const hangs = pendants(schema, hidden);
   const candidates: (LayoutResult & { score: number })[] = [];
   for (const strategy of strategies) {
     const raw =
@@ -111,9 +238,11 @@ export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): P
         : strategy === 'compound'
           ? await compoundLayout(schema, opts)
           : await islandsLayout(schema, opts, strategy);
-    // a hand-made drawing stays as it is unless tables sit too close
-    if (strategy !== 'current' || crowded(schema, raw)) spaceOut(schema, raw);
-    const sc = score(schema, raw, hidden, detail);
+    // a hand-made drawing stays as it is unless tables sit too close, but for its tables with a single link
+    if (strategy !== 'current' || crowded(schema, raw)) spaceOut(schema, raw, hangs);
+    // under their partner to begin with; the local search moves one over it where that saves crossings
+    hang(schema, raw, hangs, strategy === 'current' ? aboveOf(schema, raw, hangs) : new Set());
+    const sc = score(schema, raw, hidden, detail, hangs);
     candidates.push({ pos: raw, strategy, crossings: sc.crossings, score: sc.score });
   }
   // polish the best few; `current` always, so a hand-made drawing can only get better
@@ -129,7 +258,7 @@ export async function autoLayoutDetailed(schema: Schema, opts: LayoutOptions): P
   }
   const best = candidates.sort(better)[0];
   if (!opts.only) Object.assign(best, refineBlocks(schema, best.pos, hidden, detail, performance.now() + COMPACT_MS, true));
-  const pos = finalize(schema, best.pos);
+  const pos = finalize(schema, best.pos, hangs);
   return { pos, strategy: best.strategy, crossings: best.crossings };
 }
 
@@ -160,13 +289,14 @@ export async function searchLayouts(schema: Schema, opts: LayoutOptions, search:
   const hidden = opts.hiddenRelations ?? new Set<string>();
   const detail = ARRANGE_DETAIL;
   const startPos = new Map(schema.tables.map((t) => [t.id, { x: t.x, y: t.y }]));
-  let best = { pos: startPos, ...score(schema, startPos, hidden, detail) };
   let plan = opts.mode === 'flow' ? flowPlan(schema, hidden) : null;
+  const hangs: Hangs = plan ? new Map() : pendants(schema, hidden);
+  let best = { pos: startPos, ...score(schema, startPos, hidden, detail, hangs) };
   let lastGain = performance.now();
   const seed = search.seed ?? 1;
   const offer = (raw: Map<string, Pos>) => {
-    const pos = finalize(schema, clonePos(raw));
-    const sc = score(schema, pos, hidden, detail);
+    const pos = finalize(schema, clonePos(raw), hangs);
+    const sc = score(schema, pos, hidden, detail, hangs);
     if (sc.crossings > best.crossings || (sc.crossings === best.crossings && sc.score > best.score - MIN_GAIN)) return false;
     best = { pos, ...sc };
     lastGain = performance.now();
@@ -197,8 +327,8 @@ export async function searchLayouts(schema: Schema, opts: LayoutOptions, search:
           : start === 'compound'
             ? await compoundLayout(schemaOrder, o)
             : await islandsLayout(schemaOrder, o, start);
-      spaceOut(schema, raw);
-      offer(refineBlocks(schemaOrder, raw, hidden, detail, end).pos);
+      spaceOut(schema, raw, hangs);
+      offer(refineBlocks(schemaOrder, hang(schema, raw, hangs, new Set()), hidden, detail, end).pos);
     } else {
       offer(refineBlocks(schemaOrder, best.pos, hidden, detail, end, false, { moves: 2 + Math.floor(rand() * 4), rand }).pos);
     }
@@ -325,19 +455,21 @@ export function refineBlocks(
   /** Apply this many random moves before climbing, to get out of the start's local minimum. */
   kick?: { moves: number; rand: () => number },
 ): { pos: Map<string, Pos>; crossings: number; score: number } {
-  const blocks = new Map<string, string[]>();
-  for (const t of schema.tables) {
-    const k = t.groupId ? `g:${t.groupId}` : t.id;
-    if (!blocks.has(k)) blocks.set(k, []);
-    blocks.get(k)!.push(t.id);
-  }
+  // tables with a single link stay hung on their partner: moves only flip them from under it to over it
+  const hangs = pendants(schema, hidden);
+  const blocks = blocksOf(schema, hangs);
   // blocks holding a locked table get pinned back by honourLocks, so moving them gains nothing
   const isLocked = isLockedFn(schema);
   const locked = new Set(schema.tables.filter(isLocked).map((t) => t.id));
   const list = [...blocks.values()].filter((ids) => !ids.some((id) => locked.has(id)));
+  /** Groups, with the tables of theirs that may move inside them. */
+  const groups = [...blocks]
+    .filter(([k, ids]) => k.startsWith('g:') && !ids.some((id) => locked.has(id)))
+    .map(([, ids]) => ({ ids, free: ids.filter((id) => !hangs.has(id)) }));
   const heightOf = new Map(schema.tables.map((t) => [t.id, cardHeight(t, schema)]));
-  let pos = clonePos(start);
-  let cur = score(schema, pos, hidden, detail);
+  let above = aboveOf(schema, start, hangs);
+  let pos = hang(schema, clonePos(start), hangs, above);
+  let cur = score(schema, pos, hidden, detail, hangs);
   const flip = (p: Map<string, Pos>, ids: string[], axis: 'x' | 'y') => {
     const size = (id: string) => (axis === 'x' ? CARD_W : heightOf.get(id)!);
     const lo = Math.min(...ids.map((id) => p.get(id)![axis]));
@@ -348,10 +480,15 @@ export function refineBlocks(
     const r = bounds(ids, schema, p);
     return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
   };
-  const moves: ((p: Map<string, Pos>) => void)[] = [];
-  for (const ids of list) {
+  /** Changes `p` (cleared when the move can't be made here), and may move hung tables from one side of their partner to the other. */
+  const moves: ((p: Map<string, Pos>, above: Set<string>) => void)[] = [];
+  for (const { ids } of groups) {
     if (ids.length > 1) moves.push((p) => flip(p, ids, 'x'), (p) => flip(p, ids, 'y'));
   }
+  for (const id of hangs.keys())
+    moves.push((_, up) => {
+      if (!up.delete(id)) up.add(id);
+    });
   for (let i = 0; i < list.length; i++)
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i];
@@ -367,7 +504,7 @@ export function refineBlocks(
           p.get(id)!.x += ca.x - cb.x;
           p.get(id)!.y += ca.y - cb.y;
         }
-        removeBlockOverlaps(schema, p, () => false);
+        removeBlockOverlaps(schema, p, () => false, hangs);
       });
     }
   /** Whether the group holding `id` now reaches into another block's frame (moves inside a group only check cards). */
@@ -390,7 +527,7 @@ export function refineBlocks(
       return a.x < b.x + CARD_W + MIN_GAP_X && b.x < a.x + CARD_W + MIN_GAP_X && a.y < b.y + heightOf.get(t.id)! + MIN_GAP_Y && b.y < a.y + ha + MIN_GAP_Y;
     });
   };
-  for (const ids of list)
+  for (const { free: ids } of groups)
     for (let i = 0; i < ids.length; i++)
       for (let j = i + 1; j < ids.length; j++) {
         const a = ids[i];
@@ -440,9 +577,9 @@ export function refineBlocks(
     if (Math.abs(d) < 8) return p.clear();
     for (const id of ids) p.get(id)![axis] += d;
   };
-  for (const ids of list) {
+  for (const { ids, free } of groups) {
     if (ids.length < 2) continue;
-    for (const id of ids)
+    for (const id of free)
       for (const axis of ['x', 'y'] as const)
         moves.push((p) => {
           const r = bounds(ids, schema, p);
@@ -456,9 +593,9 @@ export function refineBlocks(
       const o = p.get(t.id)!;
       return at.x >= o.x + CARD_W + GAP_X || o.x >= at.x + CARD_W + GAP_X || at.y >= o.y + heightOf.get(t.id)! + GAP || o.y >= at.y + heightOf.get(id)! + GAP;
     });
-  for (const ids of list) {
+  for (const { ids, free } of groups) {
     if (ids.length < 2) continue;
-    for (const id of ids)
+    for (const id of free)
       moves.push((p) => {
         const others = ids.filter((x) => x !== id);
         const area = (at: Pos) => {
@@ -492,10 +629,13 @@ export function refineBlocks(
   if (kick && moves.length) {
     for (let k = 0; k < kick.moves; k++) {
       const next = clonePos(pos);
-      moves[Math.floor(kick.rand() * moves.length)](next);
-      if (next.size) pos = next;
+      const up = new Set(above);
+      moves[Math.floor(kick.rand() * moves.length)](next, up);
+      if (!next.size) continue;
+      pos = hang(schema, next, hangs, up);
+      above = up;
     }
-    cur = score(schema, pos, hidden, detail);
+    cur = score(schema, pos, hidden, detail, hangs);
   }
   let improved = true;
   while (improved && performance.now() < deadline) {
@@ -503,11 +643,14 @@ export function refineBlocks(
     for (const move of moves) {
       if (performance.now() >= deadline) break;
       const next = clonePos(pos);
-      move(next);
+      const up = new Set(above);
+      move(next, up);
       if (!next.size) continue; // move not possible here
-      const sc = score(schema, next, hidden, detail);
+      hang(schema, next, hangs, up);
+      const sc = score(schema, next, hidden, detail, hangs);
       if (sc.crossings < cur.crossings || (sc.crossings === cur.crossings && sc.score < cur.score - 1e-6)) {
         pos = next;
+        above = up;
         cur = sc;
         improved = true;
       }
@@ -522,10 +665,10 @@ function isLockedFn(schema: Schema) {
 }
 
 /** Anchor to locked tables, or keep the drawing where it was so the camera doesn't jump. */
-function finalize(schema: Schema, pos: Map<string, Pos>): Map<string, Pos> {
+function finalize(schema: Schema, pos: Map<string, Pos>, hangs: Hangs = new Map()): Map<string, Pos> {
   const isLocked = isLockedFn(schema);
-  if (schema.tables.some(isLocked)) return honourLocks(schema, pos, isLocked);
-  if (crowded(schema, pos)) spaceOut(schema, pos);
+  if (schema.tables.some(isLocked)) return honourLocks(schema, pos, isLocked, hangs);
+  if (crowded(schema, pos)) spaceOut(schema, pos, hangs);
   const minOf = (vals: number[]) => (vals.length ? Math.min(...vals) : 0);
   const dx = minOf(schema.tables.map((t) => t.x)) - minOf([...pos.values()].map((p) => p.x));
   const dy = minOf(schema.tables.map((t) => t.y)) - minOf([...pos.values()].map((p) => p.y));
@@ -740,15 +883,9 @@ const MIN_GAP_X = 44;
 /** …stacked, a line still passes between them. Hand-placed (locked) tables may sit closer. */
 const MIN_GAP_Y = 30;
 
-function honourLocks(schema: Schema, pos: Map<string, Pos>, isLocked: (t: Schema['tables'][number]) => boolean): Map<string, Pos> {
+function honourLocks(schema: Schema, pos: Map<string, Pos>, isLocked: (t: Schema['tables'][number]) => boolean, hangs: Hangs): Map<string, Pos> {
   const byId = new Map(schema.tables.map((t) => [t.id, t]));
-  // blocks: one per group, one per ungrouped table
-  const blocks = new Map<string, string[]>();
-  for (const t of schema.tables) {
-    const k = t.groupId ? `g:${t.groupId}` : t.id;
-    if (!blocks.has(k)) blocks.set(k, []);
-    blocks.get(k)!.push(t.id);
-  }
+  const blocks = blocksOf(schema, hangs);
   const out: Block[] = [];
   for (const ids of blocks.values()) {
     const locked = ids.filter((id) => isLocked(byId.get(id)!));
@@ -801,14 +938,8 @@ function separateBlocks(out: Block[], pos: Map<string, Pos>) {
   }
 }
 
-export function removeBlockOverlaps(schema: Schema, pos: Map<string, Pos>, isFixed: (ids: string[]) => boolean) {
-  const blocks = new Map<string, string[]>();
-  for (const t of schema.tables) {
-    const k = t.groupId ? `g:${t.groupId}` : t.id;
-    if (!blocks.has(k)) blocks.set(k, []);
-    blocks.get(k)!.push(t.id);
-  }
-  const out: Block[] = [...blocks.values()].map((ids) => ({ ids, fixed: isFixed(ids), rect: bounds(ids, schema, pos) }));
+export function removeBlockOverlaps(schema: Schema, pos: Map<string, Pos>, isFixed: (ids: string[]) => boolean, hangs: Hangs = new Map()) {
+  const out: Block[] = [...blocksOf(schema, hangs).values()].map((ids) => ({ ids, fixed: isFixed(ids), rect: bounds(ids, schema, pos) }));
   separateBlocks(out, pos);
 }
 
@@ -852,17 +983,11 @@ function crowded(schema: Schema, pos: Map<string, Pos>): boolean {
  * Blocks apart first (their frames keep tables of different blocks far apart), then tables of a block
  * at least MIN_GAP_X / MIN_GAP_Y from each other, and blocks apart again if that made one grow into another.
  */
-function spaceOut(schema: Schema, pos: Map<string, Pos>) {
-  removeBlockOverlaps(schema, pos, () => false);
-  const blocks = new Map<string, string[]>();
-  for (const t of schema.tables) {
-    const k = t.groupId ? `g:${t.groupId}` : t.id;
-    if (!blocks.has(k)) blocks.set(k, []);
-    blocks.get(k)!.push(t.id);
-  }
+function spaceOut(schema: Schema, pos: Map<string, Pos>, hangs: Hangs = new Map()) {
+  removeBlockOverlaps(schema, pos, () => false, hangs);
   let moved = false;
-  for (const ids of blocks.values()) if (ids.length > 1 && separateWithin(ids, schema, pos, new Set())) moved = true;
-  if (moved) removeBlockOverlaps(schema, pos, () => false);
+  for (const ids of blocksOf(schema, hangs).values()) if (ids.length > 1 && separateWithin(ids, schema, pos, new Set())) moved = true;
+  if (moved) removeBlockOverlaps(schema, pos, () => false, hangs);
 }
 
 function separateWithin(ids: string[], schema: Schema, pos: Map<string, Pos>, fixed: Set<string>): boolean {

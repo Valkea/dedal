@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseSql } from '../src/sql/parser';
 import { suggestGroups } from '../src/layout/cluster';
-import { autoLayout, autoLayoutDetailed, searchLayouts, type Strategy } from '../src/layout/auto';
+import { autoLayout, autoLayoutDetailed, pendants, searchLayouts, type Strategy } from '../src/layout/auto';
 import { CARD_W, cardHeight, countCrossings } from '../src/layout/geometry';
 import { routedCrossings } from '../src/layout/routing';
 import type { Schema } from '../src/model/types';
@@ -175,6 +175,54 @@ describe('auto-layout spacing', () => {
     expect(closest(s, both).stack).toBeGreaterThanOrEqual(30);
   }, 30000);
 
+  /** Tables with a single link sitting straight under or over their partner, nothing in between but others hung there too. */
+  const hungRight = (s: Schema) => {
+    const hangs = pendants(s);
+    const byId = new Map(s.tables.map((t) => [t.id, t]));
+    return [...hangs].every(([p, a]) => {
+      const t = byId.get(p)!, u = byId.get(a)!;
+      const lo = Math.min(t.y, u.y), hi = Math.max(t.y, u.y);
+      const between = s.tables.filter((o) => o !== t && o !== u && o.x === u.x && o.y > lo && o.y < hi);
+      return t.x === u.x && between.every((o) => hangs.get(o.id) === a);
+    });
+  };
+
+  it('hangs each table with a single link right under its partner, or over it', async () => {
+    for (const groups of [true, false]) {
+      const s = groups ? sample() : parseSql(readFileSync('src/sample.sql', 'utf8')).schema;
+      const hangs = pendants(s);
+      expect(hangs.size).toBeGreaterThan(0);
+      apply(s, await autoLayout(s, { direction: 'RIGHT' }));
+      expect(overlaps(s)).toBe(0);
+      expect(hungRight(s)).toBe(true);
+      const byId = new Map(s.tables.map((t) => [t.id, t]));
+      console.log(groups ? 'grouped' : 'no groups', [...hangs].map(([p, a]) => `${byId.get(p)!.name} ${byId.get(p)!.y > byId.get(a)!.y ? 'under' : 'over'} ${byId.get(a)!.name}`).join(', '));
+    }
+  }, 30000);
+
+  it('stacks several tables with a single link under the same partner', async () => {
+    const s = parseSql(`
+      CREATE TABLE users (id int PRIMARY KEY, name text, email text, team_id int REFERENCES teams (id));
+      CREATE TABLE teams (id int PRIMARY KEY, name text);
+      CREATE TABLE projects (id int PRIMARY KEY, team_id int REFERENCES teams (id), owner_id int REFERENCES users (id));
+      CREATE TABLE tasks (id int PRIMARY KEY, project_id int REFERENCES projects (id), assignee_id int REFERENCES users (id));
+      CREATE TABLE sessions (id int PRIMARY KEY, user_id int REFERENCES users (id), started_at timestamptz);
+      CREATE TABLE api_keys (id int PRIMARY KEY, user_id int REFERENCES users (id), secret text);
+      CREATE TABLE avatars (user_id int PRIMARY KEY REFERENCES users (id), image bytea);
+      CREATE TABLE messages (id int PRIMARY KEY, sender_id int REFERENCES users (id), recipient_id int REFERENCES users (id));
+      CREATE TABLE task_files (id int PRIMARY KEY, task_id int REFERENCES tasks (id), path text);
+    `).schema;
+    const name = new Map(s.tables.map((t) => [t.id, t.name]));
+    expect([...pendants(s)].map(([p, a]) => `${name.get(p)}>${name.get(a)}`).sort())
+      .toEqual(['api_keys>users', 'avatars>users', 'messages>users', 'sessions>users', 'task_files>tasks']);
+    apply(s, await autoLayout(s, { direction: 'RIGHT' }));
+    expect(overlaps(s)).toBe(0);
+    expect(hungRight(s)).toBe(true);
+    const { side, stack } = closest(s);
+    expect(side).toBeGreaterThanOrEqual(44);
+    expect(stack).toBeGreaterThanOrEqual(30);
+  }, 30000);
+
   it('keeps searching from the applied drawing, only ever reporting cleaner ones', async () => {
     for (const mode of ['groups', 'flow'] as const) {
       const s = sample();
@@ -200,6 +248,7 @@ describe('auto-layout spacing', () => {
       const { side, stack } = closest(last);
       expect(side).toBeGreaterThanOrEqual(44);
       expect(stack).toBeGreaterThanOrEqual(30);
+      if (mode === 'groups') expect(hungRight(last)).toBe(true);
     }
   }, 30000);
 });
