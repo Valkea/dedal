@@ -1,4 +1,4 @@
-// Structural diff between a base schema (e.g. v14) and the current one (v15),
+// Structural diff between an older schema (base, e.g. v14) and a newer one (current, v15),
 // plus the ALTER script that migrates base → current.
 
 import type { Column, EnumType, Index, Relation, Schema, Table } from '../model/types';
@@ -33,13 +33,16 @@ export interface SchemaDiff {
   extensionsRemoved: string[];
   relationsAdded: { sig: string; rel: Relation }[];
   relationsRemoved: { sig: string; rel: Relation }[];
-  /** current table id → kind (for canvas overlay). */
-  tableStatus: Map<string, ChangeKind>;
-  /** current column id → kind. */
-  columnStatus: Map<string, ChangeKind>;
-  /** current relation id → added. */
-  relationStatus: Map<string, ChangeKind>;
   count: number;
+}
+
+/** Changes keyed by the ids of one side's schema, for the canvas overlay of that side. */
+export interface DiffMarks {
+  tables: Map<string, ChangeKind>;
+  columns: Map<string, ChangeKind>;
+  relations: Map<string, ChangeKind>;
+  /** table id → columns only the other side has: removed ones on the newer side, added ones on the older. */
+  absentCols: Map<string, { kind: ChangeKind; count: number }>;
 }
 
 const tkey = (t: Table) => `${t.schema ?? ''}.${t.name}`;
@@ -73,9 +76,6 @@ export function diffSchemas(base: Schema, current: Schema): SchemaDiff {
     extensionsRemoved: base.extensions.filter((e) => !current.extensions.some((b) => b.name === e.name)).map((e) => e.name),
     relationsAdded: [],
     relationsRemoved: [],
-    tableStatus: new Map(),
-    columnStatus: new Map(),
-    relationStatus: new Map(),
     count: 0,
   };
   const baseTables = new Map(base.tables.map((t) => [tkey(t), t]));
@@ -85,21 +85,15 @@ export function diffSchemas(base: Schema, current: Schema): SchemaDiff {
     const b = baseTables.get(tkey(t));
     if (!b) {
       out.tables.push({ name: t.name, kind: 'added', current: t, columns: [], indexesAdded: [], indexesRemoved: [], commentChanged: false });
-      out.tableStatus.set(t.id, 'added');
       continue;
     }
     const columns: ColumnChange[] = [];
     for (const c of t.columns) {
       const bc = b.columns.find((x) => x.name === c.name);
-      if (!bc) {
-        columns.push({ name: c.name, kind: 'added', details: [], current: c });
-        out.columnStatus.set(c.id, 'added');
-      } else {
+      if (!bc) columns.push({ name: c.name, kind: 'added', details: [], current: c });
+      else {
         const details = columnDetails(bc, c);
-        if (details.length) {
-          columns.push({ name: c.name, kind: 'changed', details, current: c, base: bc });
-          out.columnStatus.set(c.id, 'changed');
-        }
+        if (details.length) columns.push({ name: c.name, kind: 'changed', details, current: c, base: bc });
       }
     }
     for (const bc of b.columns) if (!t.columns.some((c) => c.name === bc.name)) columns.push({ name: bc.name, kind: 'removed', details: [], base: bc });
@@ -108,10 +102,8 @@ export function diffSchemas(base: Schema, current: Schema): SchemaDiff {
     const indexesAdded = t.indexes.filter((i) => !bIdx.has(i.name) || idxSig(bIdx.get(i.name)!) !== idxSig(i));
     const indexesRemoved = b.indexes.filter((i) => !cIdx.has(i.name) || idxSig(cIdx.get(i.name)!) !== idxSig(i));
     const commentChanged = (t.comment ?? '') !== (b.comment ?? '');
-    if (columns.length || indexesAdded.length || indexesRemoved.length || commentChanged) {
+    if (columns.length || indexesAdded.length || indexesRemoved.length || commentChanged)
       out.tables.push({ name: t.name, kind: 'changed', current: t, base: b, columns, indexesAdded, indexesRemoved, commentChanged });
-      out.tableStatus.set(t.id, 'changed');
-    }
   }
   for (const b of base.tables) {
     if (!curTables.has(tkey(b))) out.tables.push({ name: b.name, kind: 'removed', base: b, columns: [], indexesAdded: [], indexesRemoved: [], commentChanged: false });
@@ -130,17 +122,31 @@ export function diffSchemas(base: Schema, current: Schema): SchemaDiff {
 
   const baseRels = new Map(base.relations.map((r) => [relSignature(base, r), r]));
   const curRels = new Map(current.relations.map((r) => [relSignature(current, r), r]));
-  for (const [sig, rel] of curRels) {
-    if (!baseRels.has(sig)) {
-      out.relationsAdded.push({ sig, rel });
-      out.relationStatus.set(rel.id, 'added');
-    }
-  }
+  for (const [sig, rel] of curRels) if (!baseRels.has(sig)) out.relationsAdded.push({ sig, rel });
   for (const [sig, rel] of baseRels) if (!curRels.has(sig)) out.relationsRemoved.push({ sig, rel });
 
   out.count =
     out.tables.length + out.enums.length + out.extensionsAdded.length + out.extensionsRemoved.length + out.relationsAdded.length + out.relationsRemoved.length;
   return out;
+}
+
+export function diffMarks(diff: SchemaDiff, side: 'base' | 'current'): DiffMarks {
+  const m: DiffMarks = { tables: new Map(), columns: new Map(), relations: new Map(), absentCols: new Map() };
+  const absent: ChangeKind = side === 'current' ? 'removed' : 'added';
+  for (const t of diff.tables) {
+    const own = t[side];
+    if (!own) continue;
+    m.tables.set(own.id, t.kind);
+    let count = 0;
+    for (const c of t.columns) {
+      const col = c[side];
+      if (col) m.columns.set(col.id, c.kind);
+      else count++;
+    }
+    if (count) m.absentCols.set(own.id, { kind: absent, count });
+  }
+  for (const r of side === 'current' ? diff.relationsAdded : diff.relationsRemoved) m.relations.set(r.rel.id, side === 'current' ? 'added' : 'removed');
+  return m;
 }
 
 function fkName(s: Schema, r: Relation): string {

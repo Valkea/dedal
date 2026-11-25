@@ -52,7 +52,8 @@ interface State {
   importDiagnostics: Diagnostic[];
   focus: { enabled: boolean; hops: number };
   path: { a?: string; b?: string };
-  diffBase: { name: string; schema: Schema } | null;
+  /** The schema loaded in Compare; it's the older side unless `newer` (then the drawing is the older). */
+  diffBase: { name: string; schema: Schema; newer?: boolean } | null;
   starFocus: string | null;
   portals: boolean;
   /** Tables and notes can't be dragged (default): avoids moving things by accident while panning or tapping. */
@@ -279,7 +280,7 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       return (e as Error).message;
     }
-    set({ diffBase: { name, schema: base }, sidebar: 'diff' });
+    set({ diffBase: { name, schema: base, newer: get().diffBase?.newer }, sidebar: 'diff' });
     const n = diffSchemas(base, get().schema).count;
     get().toast(n ? `Comparing with ${name}: ${n} difference${n > 1 ? 's' : ''} highlighted` : `${name} is identical to the current schema`, n ? 'ok' : 'warn');
     return null;

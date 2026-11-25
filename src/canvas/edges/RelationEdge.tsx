@@ -9,7 +9,7 @@ export interface RelationEdgeData extends Record<string, unknown> {
   faded?: boolean;
   lit?: boolean;
   path?: boolean;
-  diff?: 'added';
+  diff?: 'added' | 'removed' | 'changed';
   color?: string;
   blueprint?: boolean;
   /** Orthogonal route from the router (source → target); falls back to a smooth step without it. */

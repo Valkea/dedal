@@ -608,13 +608,16 @@ function DiffTab() {
     if (!e) setPaste('');
   };
 
-  const migration = useMemo(() => (base && diff ? migrationSql(base.schema, schema, diff) : ''), [base, diff, schema]);
+  // the loaded file is the older side unless swapped
+  const older = base?.newer ? schema : base?.schema;
+  const newer = base?.newer ? base.schema : schema;
+  const migration = useMemo(() => (older && diff ? migrationSql(older, newer, diff) : ''), [older, newer, diff]);
 
   if (!base || !diff) {
     return (
       <div className="stack">
         <p className="muted small">
-          Compare the current schema with an older version (e.g. <span className="mono">schema-v14.sql</span>). Changes are highlighted on the canvas and a migration script is generated. You can also drop the file on the page while this panel is open.
+          Compare the current schema with another version (e.g. <span className="mono">schema-v14.sql</span>), older or newer: once it's loaded, Swap sets which one is the older. Changes are highlighted on the canvas and a migration script is generated. You can also drop the file on the page while this panel is open.
         </p>
         <button
           className="btn primary"
@@ -623,7 +626,7 @@ function DiffTab() {
             if (f) loadBase(await f.text(), f.name);
           }}
         >
-          <Upload size={14} /> Load base .sql file
+          <Upload size={14} /> Load .sql file
         </button>
         <textarea className="input mono" rows={6} placeholder="…or paste SQL or a schema link here" value={paste} onChange={(e) => setPaste(e.target.value)} />
         <button className="btn" disabled={!paste.trim()} onClick={() => loadBase(paste, 'pasted')}>
@@ -639,8 +642,11 @@ function DiffTab() {
     <div className="stack">
       <div className="row">
         <span className="grow">
-          <span className="muted small">Base</span> <b>{base.name}</b> → <b>current</b>
+          <span className="muted small">From</span> <b>{base.newer ? 'current' : base.name}</b> → <b>{base.newer ? base.name : 'current'}</b>
         </span>
+        <button className="btn sm" title="Swap which one is the older" onClick={() => useStore.getState().set({ diffBase: { ...base, newer: !base.newer } })}>
+          <ArrowLeftRight size={12} /> Swap
+        </button>
         <button className="btn sm" onClick={() => useStore.getState().set({ diffBase: null })}>
           <X size={12} /> Stop
         </button>
@@ -668,7 +674,14 @@ function DiffTab() {
         <section className="diff-sec">
           <div className="section-title">Tables</div>
           {diff.tables.map((t) => (
-            <div key={t.name} className={`diff-table d-${t.kind}`} onClick={() => t.current && fly(t.current.id)}>
+            <div
+              key={t.name}
+              className={`diff-table d-${t.kind}`}
+              onClick={() => {
+                const own = base.newer ? t.base : t.current; // the side on the canvas
+                if (own) fly(own.id);
+              }}
+            >
               <div className="diff-line">
                 {KIND[t.kind]} <b className="mono">{t.name}</b>
               </div>
@@ -697,7 +710,7 @@ function DiffTab() {
         <button className="btn sm" onClick={async () => (await copyText(migration)) && useStore.getState().toast('Migration copied')}>
           <Copy size={12} /> Copy
         </button>
-        <button className="btn sm" onClick={() => download(`migrate-${slug(base.name)}-to-${slug(schema.name)}.sql`, migration, 'application/sql')}>
+        <button className="btn sm" onClick={() => download(`migrate-${slug(base.newer ? schema.name : base.name)}-to-${slug(base.newer ? base.name : schema.name)}.sql`, migration, 'application/sql')}>
           <Download size={12} /> .sql
         </button>
       </div>

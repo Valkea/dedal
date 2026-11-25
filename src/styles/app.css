@@ -478,6 +478,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .tcard.status-deprecated .tcard-name { text-decoration: line-through; text-decoration-color: var(--err); }
 .tcard.diff-added { box-shadow: 0 0 0 2px var(--ok), 0 0 30px -8px var(--ok); }
 .tcard.diff-changed { box-shadow: 0 0 0 2px var(--warn), 0 0 30px -10px var(--warn); }
+.tcard.diff-removed { box-shadow: 0 0 0 2px var(--err), 0 0 30px -10px var(--err); }
 .tcard-head {
   position: relative; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 14px;
   background: var(--card-head); border-radius: 12px 12px 0 0; border-bottom: 1px solid var(--line);
@@ -505,6 +506,8 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .trow.diff-added .tname::before { content: '+ '; color: var(--ok); font-weight: 700; }
 .trow.diff-changed { background: color-mix(in srgb, var(--warn) 11%, transparent); }
 .trow.diff-changed .tname::before { content: '~ '; color: var(--warn); font-weight: 700; }
+.trow.diff-removed { background: color-mix(in srgb, var(--err) 11%, transparent); }
+.trow.diff-removed .tname::before { content: '− '; color: var(--err); font-weight: 700; }
 .ticon { width: 16px; display: grid; place-items: center; flex-shrink: 0; color: var(--text-faint); }
 .ticon-pk { color: var(--pk); }
 .ticon-fk { color: var(--card-accent); }
@@ -560,6 +563,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .tblock-warn { color: var(--warn); }
 .tblock-diff.diff-added { color: var(--ok); }
 .tblock-diff.diff-changed { color: var(--warn); }
+.tblock-diff.diff-removed { color: var(--err); }
 .tblock-lock { position: absolute; right: 18px; top: 18px; color: var(--text-faint); }
 .view-blueprint .tcard-compact { background: var(--canvas-bg); }
 
@@ -617,6 +621,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .rel.is-path .rel-line { stroke: var(--accent); stroke-width: 3; opacity: 1; }
 .rel.is-path .rel-glyph { stroke: var(--accent); opacity: 1; }
 .rel.diff-added .rel-line, .rel.diff-added .rel-glyph { stroke: var(--ok); opacity: 1; }
+.rel.diff-removed .rel-line, .rel.diff-removed .rel-glyph { stroke: var(--err); opacity: 1; }
 /* a portal relation, shown while its hub's mark is hovered */
 .rel.is-ghost .rel-line { stroke-dasharray: 6 5; stroke-width: 2; opacity: .95; animation: fadeIn .2s var(--ease); }
 .rel.is-ghost .rel-glyph { stroke: var(--rel); opacity: .95; }
@@ -708,6 +713,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .star.is-far .star-halo { animation: none; opacity: .3; }
 .star.diff-added .star-core { box-shadow: 0 0 0 3px var(--ok), 0 0 26px var(--ok); }
 .star.diff-changed .star-core { box-shadow: 0 0 0 3px var(--warn), 0 0 26px var(--warn); }
+.star.diff-removed .star-core { box-shadow: 0 0 0 3px var(--err), 0 0 26px var(--err); }
 .star-label {
   position: absolute; top: calc(100% + 7px); left: 50%; transform: translateX(-50%); white-space: nowrap; font-family: var(--mono);
   font-size: 12px; color: var(--text); text-shadow: 0 1px 8px var(--canvas-bg), 0 0 2px var(--canvas-bg); pointer-events: none;
@@ -810,6 +816,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 /* diff highlight must win over the far-zoom block styling */
 .tcard.tcard-compact.diff-added { box-shadow: 0 0 0 6px var(--ok), 0 0 60px -6px var(--ok); background: color-mix(in srgb, var(--ok) 18%, var(--card)); }
 .tcard.tcard-compact.diff-changed { box-shadow: 0 0 0 6px var(--warn), 0 0 60px -6px var(--warn); background: color-mix(in srgb, var(--warn) 16%, var(--card)); }
+.tcard.tcard-compact.diff-removed { box-shadow: 0 0 0 6px var(--err), 0 0 60px -6px var(--err); background: color-mix(in srgb, var(--err) 16%, var(--card)); }
 .tblock-diff { font-weight: 700; }
 .welcome-error { margin-bottom: 18px; font-size: 13px; line-height: 1.5; }
 
@@ -900,6 +907,7 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 }
 .canvas.is-exporting .tcard.diff-added::after { inset: -2px; border: 2px solid var(--ok); border-radius: 14px; }
 .canvas.is-exporting .tcard.diff-changed::after { inset: -2px; border: 2px solid var(--warn); border-radius: 14px; }
+.canvas.is-exporting .tcard.diff-removed::after { inset: -2px; border: 2px solid var(--err); border-radius: 14px; }
 .canvas.is-exporting .tcard-compact::after { inset: -2px; border: 2px solid color-mix(in srgb, var(--card-accent) 45%, transparent); border-radius: 18px; }
 .view-blueprint.is-exporting .tcard::after { inset: -1.5px; border: 1.5px solid var(--bp-ink); border-radius: 3.5px; }
 .canvas.is-exporting .tcard-bar, .canvas.is-exporting .sev-error, .canvas.is-exporting .star-core { box-shadow: none; }

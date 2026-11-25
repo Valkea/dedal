@@ -1,7 +1,7 @@
 // Memoised views over the store that several components share.
 
 import { useMemo } from 'react';
-import { diffSchemas } from '../analysis/diff';
+import { diffMarks, diffSchemas } from '../analysis/diff';
 import { hopDistances, shortestPath } from '../analysis/graph';
 import { lintSchema } from '../analysis/lint';
 import { portalHubs, useStore, type Hub } from './store';
@@ -11,10 +11,18 @@ export function useIssues() {
   return useMemo(() => lintSchema(schema), [schema]);
 }
 
+/** The comparison from the older schema to the newer: the loaded one is the older unless swapped. */
 export function useDiff() {
   const schema = useStore((s) => s.schema);
   const base = useStore((s) => s.diffBase);
-  return useMemo(() => (base ? diffSchemas(base.schema, schema) : null), [schema, base]);
+  return useMemo(() => (base ? (base.newer ? diffSchemas(schema, base.schema) : diffSchemas(base.schema, schema)) : null), [schema, base]);
+}
+
+/** The comparison's changes keyed by ids of the schema on the canvas, whichever side of it that is. */
+export function useDiffMarks() {
+  const diff = useDiff();
+  const newer = useStore((s) => !!s.diffBase?.newer);
+  return useMemo(() => (diff ? diffMarks(diff, newer ? 'base' : 'current') : null), [diff, newer]);
 }
 
 /** Portal hubs of the Atlas view (none elsewhere), keyed by table id. */

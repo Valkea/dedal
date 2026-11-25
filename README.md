@@ -70,9 +70,10 @@ get the `SELECT … JOIN …` to copy.
 
 ### 🆚 Compare: see what changed, get the migration
 
-Load an older version (a file, pasted SQL or a link). New and changed tables are marked on the
-canvas, every difference is listed, and you get the migration script (`BEGIN; … ALTER TABLE …`) to
-copy or download.
+Load another version (a file, pasted SQL or a link). It's taken as the older one; if it's the newer,
+press Swap. Changes are marked on the canvas (new, changed or removed, depending on which side the
+drawing is), every difference is listed, and you get the migration script (`BEGIN; … ALTER TABLE …`)
+from the older to the newer, to copy or download.
 
 <img src="public/medias/compare.png" alt="Compare: reviews marked NEW and books marked CHANGED on the canvas, with the list of differences and the migration script" width="100%">
 

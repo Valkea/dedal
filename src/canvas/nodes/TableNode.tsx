@@ -22,7 +22,8 @@ export interface TableNodeData extends Record<string, unknown> {
   lit?: boolean;
   diff?: ChangeKind;
   colDiff?: Map<string, ChangeKind>;
-  removedCols?: number;
+  /** Columns only the other side of the comparison has. */
+  absentCols?: { kind: ChangeKind; count: number };
   issues?: { errors: number; warnings: number; infos: number };
   selectedColumn?: string;
   /** Go through a portal: fly from this table to the hub. */
@@ -32,6 +33,8 @@ export interface TableNodeData extends Record<string, unknown> {
   /** Hovering a hub mark shows its hidden lines (null when the pointer leaves). */
   onHubHover?: (hubId: string | null) => void;
 }
+
+const DIFF_LABEL: Record<ChangeKind, string> = { added: 'new', changed: 'changed', removed: 'removed' };
 
 const hubStyle = (h: Hub) => ({ ['--hub' as string]: h.color }) as React.CSSProperties;
 
@@ -108,7 +111,7 @@ function GhostHandles({ columns }: { columns: { id: string }[] }) {
 }
 
 function TableNodeImpl({ data, selected }: NodeProps<TableNodeType>) {
-  const { table, schema, detail, groupColor, fkCols, portals, hub, enumNames, faded, lit, diff, colDiff, issues, selectedColumn, removedCols } = data;
+  const { table, schema, detail, groupColor, fkCols, portals, hub, enumNames, faded, lit, diff, colDiff, issues, selectedColumn, absentCols } = data;
   const cols = visibleColumns(table, schema, detail);
   const hidden = table.columns.length - cols.length;
   const accent = table.color ?? groupColor ?? 'var(--accent)';
@@ -131,7 +134,7 @@ function TableNodeImpl({ data, selected }: NodeProps<TableNodeType>) {
             {issues && issues.errors > 0 && <span className="tblock-err"> · {issues.errors} error{issues.errors > 1 ? 's' : ''}</span>}
             {issues && issues.warnings > 0 && <span className="tblock-warn"> · {issues.warnings} warning{issues.warnings > 1 ? 's' : ''}</span>}
             {issues && issues.infos > 0 && <span> · {issues.infos} hint{issues.infos > 1 ? 's' : ''}</span>}
-            {diff && <span className={`tblock-diff diff-${diff}`}> · {diff === 'added' ? 'new' : 'changed'}</span>}
+            {diff && <span className={`tblock-diff diff-${diff}`}> · {DIFF_LABEL[diff]}</span>}
           </span>
           {table.locked && <Lock size={28} className="tblock-lock" />}
         </div>
@@ -159,8 +162,8 @@ function TableNodeImpl({ data, selected }: NodeProps<TableNodeType>) {
           {table.name}
         </span>
         <span className="tcard-badges">
-          {diff && <span className={`badge badge-${diff}`}>{diff === 'added' ? 'new' : 'changed'}</span>}
-          {!!removedCols && <span className="badge badge-removed">−{removedCols} col</span>}
+          {diff && <span className={`badge badge-${diff}`}>{DIFF_LABEL[diff]}</span>}
+          {absentCols && <span className={`badge badge-${absentCols.kind}`}>{absentCols.kind === 'added' ? '+' : '−'}{absentCols.count} col</span>}
           {table.status && <span className={`badge badge-${table.status}`}>{table.status}</span>}
           {issues && issues.errors > 0 && <span className="badge badge-err" title="Schema errors">{issues.errors}</span>}
           {issues && issues.warnings > 0 && <span className="badge badge-warn" title="Schema warnings">{issues.warnings}</span>}

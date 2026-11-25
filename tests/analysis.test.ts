@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { produce } from 'immer';
 import { describe, expect, it } from 'vitest';
-import { diffSchemas, migrationSql } from '../src/analysis/diff';
+import { diffMarks, diffSchemas, migrationSql } from '../src/analysis/diff';
 import { joinSql, shortestPath } from '../src/analysis/graph';
 import { lintSchema } from '../src/analysis/lint';
 import { generateSql } from '../src/sql/generator';
@@ -48,6 +48,45 @@ describe('lint', () => {
     expect(after['fk-missing-index']).toBeUndefined();
     expect(after['redundant-index']).toBeUndefined();
     expect(after['double-escaped-comment']).toBeUndefined();
+  });
+});
+
+describe('diff marks', () => {
+  const older = parseSql(`
+    CREATE TABLE a (id int PRIMARY KEY, gone text, kept text);
+    CREATE TABLE old_only (id int PRIMARY KEY, a_id int REFERENCES a);
+  `).schema;
+  const newer = parseSql(`
+    CREATE TABLE a (id int PRIMARY KEY, kept varchar(9), fresh text, more text);
+    CREATE TABLE new_only (id int PRIMARY KEY, a_id int REFERENCES a);
+  `).schema;
+  const d = diffSchemas(older, newer);
+  const names = (s: typeof older, ids: Map<string, string>) => {
+    const out: string[] = [];
+    for (const [id, kind] of ids) {
+      const t = s.tables.find((x) => x.id === id);
+      const c = s.tables.flatMap((x) => x.columns.map((col) => [x, col] as const)).find(([, col]) => col.id === id);
+      out.push(`${kind}:${t ? t.name : `${c![0].name}.${c![1].name}`}`);
+    }
+    return out.sort();
+  };
+
+  it('marks the newer side with what was added and changed', () => {
+    const m = diffMarks(d, 'current');
+    expect(names(newer, m.tables)).toEqual(['added:new_only', 'changed:a']);
+    expect(names(newer, m.columns)).toEqual(['added:a.fresh', 'added:a.more', 'changed:a.kept']);
+    expect([...m.relations.values()]).toEqual(['added']);
+    expect(newer.relations.some((r) => m.relations.has(r.id))).toBe(true);
+    expect(m.absentCols.get(newer.tables[0].id)).toEqual({ kind: 'removed', count: 1 });
+  });
+
+  it('marks the older side with what was removed and changed, when the drawing is the older one', () => {
+    const m = diffMarks(d, 'base');
+    expect(names(older, m.tables)).toEqual(['changed:a', 'removed:old_only']);
+    expect(names(older, m.columns)).toEqual(['changed:a.kept', 'removed:a.gone']);
+    expect([...m.relations.values()]).toEqual(['removed']);
+    expect(older.relations.some((r) => m.relations.has(r.id))).toBe(true);
+    expect(m.absentCols.get(older.tables[0].id)).toEqual({ kind: 'added', count: 2 });
   });
 });
 

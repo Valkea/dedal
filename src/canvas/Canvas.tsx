@@ -24,7 +24,7 @@ import { regionFrame, routeSchema } from '../layout/routing';
 import { uid } from '../model/ids';
 import type { Schema } from '../model/types';
 import { canonicalType, isSerial } from '../sql/pg';
-import { lensEnabled, useDiff, useHidden, useHubs, useIssues, useLens, usePath } from '../store/derived';
+import { lensEnabled, useDiffMarks, useHidden, useHubs, useIssues, useLens, usePath } from '../store/derived';
 import { CornerUpLeft, Lock, Map as MapIcon, X } from 'lucide-react';
 import { useStore, type Hub } from '../store/store';
 import { useIsPhone } from '../util/phone';
@@ -164,7 +164,7 @@ export function Canvas() {
   const hidden = useHidden();
   const hubs = useHubs();
   const issues = useIssues();
-  const diff = useDiff();
+  const diff = useDiffMarks();
   const path = usePath();
   const rf = useReactFlow();
   const flowStore = useStoreApi();
@@ -335,7 +335,7 @@ export function Canvas() {
             hop: far ? (dist?.get(awayFrom!) ?? Infinity) : path?.rels ? undefined : lens?.get(t.id) || undefined,
             far,
             ring: dist?.get(t.id),
-            diff: diff?.tableStatus.get(t.id),
+            diff: diff?.tables.get(t.id),
           },
           selected: selection?.kind === 'table' && selection.id === t.id,
           // no width/height: React Flow only measures handles of nodes it sizes itself
@@ -396,9 +396,6 @@ export function Canvas() {
       if (!portalsByTable.has(r.from.table)) portalsByTable.set(r.from.table, new Map());
       portalsByTable.get(r.from.table)!.set(r.from.columns[0], hub);
     }
-    const removedCols = new Map<string, number>();
-    if (diff) for (const d of diff.tables) if (d.current) removedCols.set(d.current.id, d.columns.filter((c) => c.kind === 'removed').length);
-
     for (const t of schema.tables) {
       const g = t.groupId ? byGroup.get(t.groupId) : undefined;
       out.push({
@@ -416,9 +413,9 @@ export function Canvas() {
           enumNames,
           faded: isFaded(t.id),
           lit: !!path?.rels && path.tables.has(t.id),
-          diff: diff?.tableStatus.get(t.id),
-          colDiff: diff?.columnStatus,
-          removedCols: removedCols.get(t.id),
+          diff: diff?.tables.get(t.id),
+          colDiff: diff?.columns,
+          absentCols: diff?.absentCols.get(t.id),
           issues: issueCount.get(t.id),
           selectedColumn: selection?.kind === 'table' && selection.id === t.id ? selection.columnId : undefined,
           onPortal: goThrough,
@@ -545,7 +542,7 @@ export function Canvas() {
           hover: isHover,
           points: route?.points,
           path: onPath,
-          diff: diff?.relationStatus.get(r.id) === 'added' ? 'added' : undefined,
+          diff: diff?.relations.get(r.id),
           color: ghost ? ghost.color : view === 'atlas' ? g?.color : undefined,
           blueprint: view === 'blueprint',
           ghost: !!ghost,
