@@ -24,7 +24,7 @@ import { regionFrame, routeSchema } from '../layout/routing';
 import { uid } from '../model/ids';
 import type { Schema } from '../model/types';
 import { canonicalType, isSerial } from '../sql/pg';
-import { lensEnabled, useDiffMarks, useHidden, useHubs, useIssues, useLens, usePath } from '../store/derived';
+import { lensEnabled, useDiffGhosts, useDiffMarks, useHidden, useHubs, useIssues, useLens, usePath } from '../store/derived';
 import { CornerUpLeft, Lock, Map as MapIcon, X } from 'lucide-react';
 import { useStore, type Hub } from '../store/store';
 import { useIsPhone } from '../util/phone';
@@ -165,6 +165,7 @@ export function Canvas() {
   const hubs = useHubs();
   const issues = useIssues();
   const diff = useDiffMarks();
+  const ghosts = useDiffGhosts();
   const path = usePath();
   const rf = useReactFlow();
   const flowStore = useStoreApi();
@@ -428,6 +429,24 @@ export function Canvas() {
         measured: measured.get(t.id),
       });
     }
+    // tables only the compared version has: read-only cards right of the drawing
+    if (ghosts) {
+      const ghostFks = new Set(ghosts.schema.relations.flatMap((r) => r.from.columns));
+      const ghostEnums = new Set(ghosts.schema.enums.map((e) => e.name));
+      for (const t of ghosts.tables) {
+        out.push({
+          id: `ghost:${t.id}`,
+          type: 'table',
+          position: { x: t.x, y: t.y },
+          data: { table: t, schema: ghosts.schema, detail, fkCols: ghostFks, portals: new Map(), enumNames: ghostEnums, diff: ghosts.kind, ghost: true },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          deletable: false,
+          measured: measured.get(`ghost:${t.id}`),
+        });
+      }
+    }
     for (const n of schema.notes) {
       out.push({
         id: `note:${n.id}`,
@@ -441,7 +460,7 @@ export function Canvas() {
       });
     }
     return out;
-  }, [schema, view, detail, selection, hidden, diff, issueCount, path, lens, lensHover, measured, goThrough, visitHub, hubs, starPos, starFocus, orbit, highlight, overview, bundles, hoverRegion]);
+  }, [schema, view, detail, selection, hidden, diff, ghosts, issueCount, path, lens, lensHover, measured, goThrough, visitHub, hubs, starPos, starFocus, orbit, highlight, overview, bundles, hoverRegion]);
   // the move lock overrides each node's own draggable flag (which only reflects per-table locks)
   const shownNodes = useMemo(() => (moveLocked && view !== 'constellation' ? nodes.map((n) => (n.draggable === false ? n : { ...n, draggable: false })) : nodes), [nodes, moveLocked, view]);
 
@@ -551,6 +570,30 @@ export function Canvas() {
         ...(ghost && { selectable: false, focusable: false }),
       });
     }
+    for (const { rel, from, to } of ghosts?.relations ?? []) {
+      const node = (e: typeof from) => (e.ghost ? `ghost:${e.table.id}` : e.table.id);
+      const fs = to.table.x >= from.table.x ? 'R' : 'L';
+      const ts = to.table.x >= from.table.x ? 'L' : 'R';
+      const handle = (e: typeof from, side: string) => (detail === 'compact' || !e.column ? `T-${side}` : `${e.column.id}-${side}`);
+      out.push({
+        id: `ghost:${rel.id}`,
+        source: node(from),
+        target: node(to),
+        sourceHandle: handle(from, fs),
+        targetHandle: handle(to, ts),
+        type: 'relation',
+        selectable: false,
+        focusable: false,
+        data: {
+          label: `${from.table.name}.${from.column?.name ?? '?'} → ${to.table.name}.${to.column?.name ?? '?'}`,
+          onDelete: rel.onDelete,
+          childUnique: !!from.column?.unique,
+          childNullable: !!from.column?.nullable,
+          diff: ghosts!.kind,
+          blueprint: view === 'blueprint',
+        },
+      });
+    }
     for (const n of schema.notes) {
       if (!n.attachedTo || !byId.has(n.attachedTo)) continue;
       const t = byId.get(n.attachedTo)!;
@@ -558,7 +601,7 @@ export function Canvas() {
       out.push({ id: `nl:${n.id}`, source: `note:${n.id}`, sourceHandle: 'n', target: n.attachedTo, targetHandle: side, type: 'notelink', selectable: false, focusable: false });
     }
     return out;
-  }, [schema, view, hidden, path, lens, selection, detail, diff, highlight, routes, hoverEdge, bundles, hoverRegion, hubs, hubHover]);
+  }, [schema, view, hidden, path, lens, selection, detail, diff, ghosts, highlight, routes, hoverEdge, bundles, hoverRegion, hubs, hubHover]);
 
   // Handles move without the card changing size (detail level, view, column edits),
   // which React Flow's resize observer can't see — re-measure them explicitly.
@@ -717,7 +760,7 @@ export function Canvas() {
           if (n.type === 'star') onStarTap(_, n.id);
           else if (n.id.startsWith('region:')) st.select({ kind: 'group', id: n.id.slice(7) });
           else if (n.id.startsWith('note:')) st.select({ kind: 'note', id: n.id.slice(5) });
-          else if (n.type === 'table') {
+          else if (n.type === 'table' && !n.id.startsWith('ghost:')) {
             const target = (_.target as HTMLElement).closest('[data-col]') as HTMLElement | null;
             st.select({ kind: 'table', id: n.id, columnId: target?.dataset.col });
           }
@@ -728,17 +771,17 @@ export function Canvas() {
             if (f) rf.fitBounds({ x: f.x, y: f.y, width: f.w, height: f.h }, { padding: 0.15, duration: 600 });
           }
         }}
-        onEdgeClick={(ev, e) => !secondStarTap(ev) && !e.id.startsWith('nl:') && useStore.getState().select({ kind: 'relation', id: e.id })}
+        onEdgeClick={(ev, e) => !secondStarTap(ev) && !e.id.startsWith('nl:') && !e.id.startsWith('ghost:') && useStore.getState().select({ kind: 'relation', id: e.id })}
         onPaneClick={(ev) => !secondStarTap(ev) && useStore.getState().select(null)}
         onNodeMouseEnter={(_, n) => {
-          if (n.type === 'table' || n.type === 'star') setHover(n.id);
+          if ((n.type === 'table' && !n.id.startsWith('ghost:')) || n.type === 'star') setHover(n.id);
           else if (n.type === 'region' && overview) setHoverRegion(n.id);
         }}
         onNodeMouseLeave={() => {
           setHover(null);
           setHoverRegion(null);
         }}
-        onEdgeMouseEnter={(_, e) => e.type === 'relation' && setHoverEdge(e.id)}
+        onEdgeMouseEnter={(_, e) => e.type === 'relation' && !e.id.startsWith('ghost:') && setHoverEdge(e.id)}
         onEdgeMouseLeave={() => setHoverEdge(null)}
         onConnect={onConnect}
         onDoubleClick={(e) => {

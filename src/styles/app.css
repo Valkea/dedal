@@ -473,6 +473,9 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 }
 .tcard.is-selected { box-shadow: 0 0 0 2px var(--card-accent), 0 0 0 6px color-mix(in srgb, var(--card-accent) 22%, transparent), var(--card-shadow); }
 .tcard.is-faded { opacity: .13; }
+/* a table only the compared version has */
+.tcard.is-ghost { opacity: .78; background: color-mix(in srgb, var(--card) 70%, transparent); }
+.tcard.is-ghost .tcard-rows, .tcard.is-ghost .tblock { filter: saturate(.6); }
 .tcard.is-lit { box-shadow: 0 0 0 2px var(--accent), 0 0 40px -6px color-mix(in srgb, var(--accent) 60%, transparent); }
 .tcard.status-draft { border: 0; background-image: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--accent) 4%, transparent) 10px 20px); }
 .tcard.status-deprecated .tcard-name { text-decoration: line-through; text-decoration-color: var(--err); }

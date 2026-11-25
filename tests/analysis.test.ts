@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { produce } from 'immer';
 import { describe, expect, it } from 'vitest';
-import { diffMarks, diffSchemas, migrationSql } from '../src/analysis/diff';
+import { diffGhosts, diffMarks, diffSchemas, migrationSql } from '../src/analysis/diff';
 import { joinSql, shortestPath } from '../src/analysis/graph';
 import { lintSchema } from '../src/analysis/lint';
 import { generateSql } from '../src/sql/generator';
@@ -87,6 +87,22 @@ describe('diff marks', () => {
     expect([...m.relations.values()]).toEqual(['removed']);
     expect(older.relations.some((r) => m.relations.has(r.id))).toBe(true);
     expect(m.absentCols.get(older.tables[0].id)).toEqual({ kind: 'added', count: 2 });
+  });
+
+  it('gives the tables only the compared version has, with their foreign keys tied to the drawn tables', () => {
+    // drawing = older, compared = newer: new_only is missing from the drawing
+    const g = diffGhosts(d, older, newer, 'current');
+    expect(g.kind).toBe('added');
+    expect(g.tables.map((t) => t.name)).toEqual(['new_only']);
+    expect(g.relations.map((r) => `${r.from.ghost ? 'ghost ' : ''}${r.from.table.name}.${r.from.column?.name} → ${r.to.ghost ? 'ghost ' : ''}${r.to.table.name}.${r.to.column?.name}`)).toEqual([
+      'ghost new_only.a_id → a.id',
+    ]);
+    expect(g.relations[0].to.table).toBe(older.tables[0]);
+    // drawing = newer, compared = older: old_only is missing from it
+    const r = diffGhosts(d, newer, older, 'base');
+    expect(r.kind).toBe('removed');
+    expect(r.tables.map((t) => t.name)).toEqual(['old_only']);
+    expect(r.relations[0].to.table).toBe(newer.tables[0]);
   });
 });
 

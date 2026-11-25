@@ -45,6 +45,21 @@ export interface DiffMarks {
   absentCols: Map<string, { kind: ChangeKind; count: number }>;
 }
 
+/** One end of a foreign key of a ghost table: the ghost itself, or the drawn table it points to or from. */
+export interface GhostEnd {
+  table: Table;
+  column?: Column;
+  ghost: boolean;
+}
+
+/** Tables only the other side has, so not on the canvas, with the foreign keys that touch them. */
+export interface DiffGhosts {
+  /** added when the drawing is the older side, removed when it's the newer. */
+  kind: ChangeKind;
+  tables: Table[];
+  relations: { rel: Relation; from: GhostEnd; to: GhostEnd }[];
+}
+
 const tkey = (t: Table) => `${t.schema ?? ''}.${t.name}`;
 
 export function relSignature(s: Schema, r: Relation): string {
@@ -147,6 +162,29 @@ export function diffMarks(diff: SchemaDiff, side: 'base' | 'current'): DiffMarks
   }
   for (const r of side === 'current' ? diff.relationsAdded : diff.relationsRemoved) m.relations.set(r.rel.id, side === 'current' ? 'added' : 'removed');
   return m;
+}
+
+export function diffGhosts(diff: SchemaDiff, drawn: Schema, other: Schema, otherSide: 'base' | 'current'): DiffGhosts {
+  const kind: ChangeKind = otherSide === 'current' ? 'added' : 'removed';
+  const tables = diff.tables.filter((t) => t.kind === kind).map((t) => t[otherSide]!);
+  const ghostIds = new Set(tables.map((t) => t.id));
+  const drawnTables = new Map(drawn.tables.map((t) => [tkey(t), t]));
+  const end = (tableId: string, columnId: string): GhostEnd | undefined => {
+    const t = other.tables.find((x) => x.id === tableId);
+    const c = t?.columns.find((x) => x.id === columnId);
+    if (!t) return undefined;
+    if (ghostIds.has(t.id)) return { table: t, column: c, ghost: true };
+    const d = drawnTables.get(tkey(t));
+    return d && { table: d, column: d.columns.find((x) => x.name === c?.name), ghost: false };
+  };
+  const relations: DiffGhosts['relations'] = [];
+  for (const { rel } of otherSide === 'current' ? diff.relationsAdded : diff.relationsRemoved) {
+    if (!ghostIds.has(rel.from.table) && !ghostIds.has(rel.to.table)) continue;
+    const from = end(rel.from.table, rel.from.columns[0]);
+    const to = end(rel.to.table, rel.to.columns[0]);
+    if (from && to) relations.push({ rel, from, to });
+  }
+  return { kind, tables, relations };
 }
 
 function fkName(s: Schema, r: Relation): string {

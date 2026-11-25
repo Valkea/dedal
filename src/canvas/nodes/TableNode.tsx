@@ -24,6 +24,8 @@ export interface TableNodeData extends Record<string, unknown> {
   colDiff?: Map<string, ChangeKind>;
   /** Columns only the other side of the comparison has. */
   absentCols?: { kind: ChangeKind; count: number };
+  /** A table only the compared version has: shown, but not part of the drawing. */
+  ghost?: boolean;
   issues?: { errors: number; warnings: number; infos: number };
   selectedColumn?: string;
   /** Go through a portal: fly from this table to the hub. */
@@ -111,11 +113,11 @@ function GhostHandles({ columns }: { columns: { id: string }[] }) {
 }
 
 function TableNodeImpl({ data, selected }: NodeProps<TableNodeType>) {
-  const { table, schema, detail, groupColor, fkCols, portals, hub, enumNames, faded, lit, diff, colDiff, issues, selectedColumn, absentCols } = data;
+  const { table, schema, detail, groupColor, fkCols, portals, hub, enumNames, faded, lit, diff, colDiff, issues, selectedColumn, absentCols, ghost } = data;
   const cols = visibleColumns(table, schema, detail);
   const hidden = table.columns.length - cols.length;
   const accent = table.color ?? groupColor ?? 'var(--accent)';
-  const cls = ['tcard', `tcard-${detail}`, selected && 'is-selected', faded && 'is-faded', lit && 'is-lit', diff && `diff-${diff}`, table.status && `status-${table.status}`]
+  const cls = ['tcard', `tcard-${detail}`, selected && 'is-selected', faded && 'is-faded', lit && 'is-lit', diff && `diff-${diff}`, ghost && 'is-ghost', table.status && `status-${table.status}`]
     .filter(Boolean)
     .join(' ');
 

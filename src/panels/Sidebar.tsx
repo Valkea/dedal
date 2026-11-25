@@ -28,6 +28,7 @@ import { migrationSql } from '../analysis/diff';
 import { joinSql } from '../analysis/graph';
 import { RULE_LABELS, type Issue } from '../analysis/lint';
 import { suggestGroups } from '../layout/cluster';
+import { CARD_W } from '../layout/geometry';
 import { uid } from '../model/ids';
 import { PALETTE } from '../model/palette';
 import { EXTENSIONS } from '../sql/pg';
@@ -599,6 +600,7 @@ function DiffTab() {
   const schema = useStore((s) => s.schema);
   const diff = useDiff();
   const fly = useFly();
+  const rf = useReactFlow();
   const [paste, setPaste] = useState('');
   const [err, setErr] = useState('');
 
@@ -679,7 +681,10 @@ function DiffTab() {
               className={`diff-table d-${t.kind}`}
               onClick={() => {
                 const own = base.newer ? t.base : t.current; // the side on the canvas
-                if (own) fly(own.id);
+                if (own) return fly(own.id);
+                // only the compared version has it: go to its ghost card
+                const n = rf.getNode(`ghost:${(t.current ?? t.base)!.id}`);
+                if (n) rf.setCenter(n.position.x + CARD_W / 2, n.position.y + (n.measured?.height ?? 0) / 2, { zoom: Math.max(rf.getZoom(), 0.85), duration: 600 });
               }}
             >
               <div className="diff-line">
