@@ -7,6 +7,7 @@ import {
   MiniMap,
   ReactFlow,
   useReactFlow,
+  ViewportPortal,
   useStore as useFlowStore,
   useStoreApi,
   useUpdateNodeInternals,
@@ -18,6 +19,7 @@ import {
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { adjacency, hopDistances } from '../analysis/graph';
+import { alignBox, type Box, type Guide } from '../layout/align';
 import { CARD_W, cardHeight, type Detail } from '../layout/geometry';
 import { forceLayoutPositions, orbitPositions, starRadius } from '../layout/constellation';
 import { regionFrame, routeSchema } from '../layout/routing';
@@ -45,6 +47,8 @@ const detailSelector = (s: ReactFlowState): Detail =>
 /** Below this zoom, Atlas shows groups instead of tables. */
 const OVERVIEW_ZOOM = 0.2;
 export const overviewSelector = (s: ReactFlowState) => s.transform[2] < OVERVIEW_ZOOM;
+/** With snapping on, a dragged card lines up with another card's edge or middle within this many screen pixels. */
+const SNAP_REACH = 8;
 
 type Pos = { x: number; y: number };
 
@@ -196,6 +200,9 @@ export function Canvas() {
   const lensOn = useStore(lensEnabled);
   const focusHover = lensOn ? lensHover : hover;
   const [measured, setMeasured] = useState<Map<string, { width: number; height: number }>>(new Map());
+  // the node being dragged (set between drag start and stop; keyboard moves don't count) and the alignment guides it shows
+  const dragging = useRef<string | null>(null);
+  const [guides, setGuides] = useState<Guide[]>([]);
 
   // ---- constellation positions ----
   const starTarget = useMemo(() => {
@@ -682,6 +689,26 @@ export function Canvas() {
         // snap to the background grid so cards line up with the dots/lines and with each other
         const grid = view === 'blueprint' ? 24 : 22;
         const at = (v: number) => (snap ? Math.round(v / grid) * grid : Math.round(v));
+        // the card under the pointer is also drawn to the edges and middles of the cards on screen,
+        // so it lines up with them wherever they are, on the grid or not (Arrange doesn't use the grid)
+        let shownGuides: Guide[] | null = null;
+        const place = (id: string, p: Pos): Pos => {
+          if (!snap || dragging.current !== id) return { x: at(p.x), y: at(p.y) };
+          const fs = flowStore.getState();
+          const me = fs.nodeLookup.get(id);
+          const [tx, ty, k] = fs.transform;
+          const seen = { x: -tx / k, y: -ty / k, w: fs.width / k, h: fs.height / k };
+          const others: Box[] = [];
+          for (const [oid, n] of fs.nodeLookup) {
+            if (oid === id || n.hidden || (n.type !== 'table' && n.type !== 'note')) continue;
+            const b = { id: oid, ...n.internals.positionAbsolute, w: n.measured.width ?? 0, h: n.measured.height ?? 0 };
+            if (!b.w || !b.h || b.x > seen.x + seen.w || b.x + b.w < seen.x || b.y > seen.y + seen.h || b.y + b.h < seen.y) continue;
+            others.push(b);
+          }
+          const r = alignBox({ ...p, w: me?.measured.width ?? CARD_W, h: me?.measured.height ?? 0 }, others, SNAP_REACH / k, grid);
+          shownGuides = r.guides;
+          return { x: r.x, y: r.y };
+        };
         const moved: Record<string, { x: number; y: number }> = {};
         st.setTransient((d) => {
           for (const c of moves) {
@@ -706,26 +733,21 @@ export function Canvas() {
               }
             } else if (c.id.startsWith('ghost:')) {
               // not part of the schema: kept aside, outside the undo history
-              moved[c.id.slice(6)] = { x: at(c.position.x), y: at(c.position.y) };
+              moved[c.id.slice(6)] = place(c.id, c.position);
             } else if (c.id.startsWith('note:')) {
               const note = d.notes.find((n) => `note:${n.id}` === c.id);
-              if (note) {
-                note.x = at(c.position.x);
-                note.y = at(c.position.y);
-              }
+              if (note) Object.assign(note, place(c.id, c.position));
             } else {
               const t = d.tables.find((x) => x.id === c.id);
-              if (t) {
-                t.x = at(c.position.x);
-                t.y = at(c.position.y);
-              }
+              if (t) Object.assign(t, place(c.id, c.position));
             }
           }
         });
         if (Object.keys(moved).length) st.set({ ghostPos: { ...useStore.getState().ghostPos, ...moved } });
+        if (shownGuides) setGuides((prev) => (JSON.stringify(prev) === JSON.stringify(shownGuides) ? prev : shownGuides!));
       }
     },
-    [nodes, view, setStarPos, snap],
+    [nodes, view, setStarPos, snap, flowStore],
   );
 
   const onConnect = useCallback((c: Connection) => {
@@ -762,8 +784,15 @@ export function Canvas() {
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
-        onNodeDragStart={(_, n) => !n.id.startsWith('ghost:') && useStore.getState().checkpoint()}
-        onNodeDragStop={() => useStore.setState((s) => ({ revision: s.revision + 1 }))}
+        onNodeDragStart={(_, n) => {
+          dragging.current = n.id;
+          if (!n.id.startsWith('ghost:')) useStore.getState().checkpoint();
+        }}
+        onNodeDragStop={() => {
+          dragging.current = null;
+          setGuides([]);
+          useStore.setState((s) => ({ revision: s.revision + 1 }));
+        }}
         onNodeClick={(_, n) => {
           const st = useStore.getState();
           if (n.type === 'star') onStarTap(_, n.id);
@@ -813,7 +842,17 @@ export function Canvas() {
         multiSelectionKeyCode={null}
         onlyRenderVisibleElements={false}
       >
-        <Background variant={bg} gap={view === 'blueprint' ? 24 : 22} size={view === 'blueprint' ? 1 : 1.3} className="bg" />
+        {/* React Flow centres each dot in its cell, half a step off the grid that cards snap to: shift them back onto it */}
+        <Background variant={bg} gap={view === 'blueprint' ? 24 : 22} size={view === 'blueprint' ? 1 : 1.3} offset={view === 'blueprint' ? 0 : (22 + 1.3) / 2} className="bg" />
+        {guides.length > 0 && (
+          <ViewportPortal>
+            <svg className="snap-guides" width={1} height={1} aria-hidden>
+              {guides.map((g, i) =>
+                g.axis === 'x' ? <line key={i} x1={g.at} x2={g.at} y1={g.from - 16} y2={g.to + 16} /> : <line key={i} x1={g.from - 16} x2={g.to + 16} y1={g.at} y2={g.at} />,
+              )}
+            </svg>
+          </ViewportPortal>
+        )}
         {view === 'blueprint' && <Background id="major" variant={BackgroundVariant.Lines} gap={120} className="bg-major" />}
         <CanvasToolbar moveLocked={moveLocked} onMoveLocked={setMoveLocked} snap={snap} onSnap={toggleSnap} />
         {miniOpen && (

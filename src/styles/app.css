@@ -405,6 +405,10 @@ textarea.input { height: auto; padding: 7px 9px; resize: vertical; line-height: 
 .canvas .bg { --xy-background-pattern-color: var(--dots); }
 .react-flow__background pattern circle { fill: var(--dots); }
 .react-flow__node { font-family: var(--sans); }
+/* alignment guides while dragging with snapping on (drawn in canvas units, 1px whatever the zoom) */
+.snap-guides { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 2000; }
+.snap-guides line { stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+.view-blueprint .snap-guides line { stroke: var(--bp-ink); stroke-dasharray: 4 3; }
 .react-flow__node.selectable:focus-visible { outline: none; }
 .react-flow__controls { box-shadow: none; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--panel); margin: 14px; }
 .react-flow__controls-button { background: transparent; border: 0; border-bottom: 1px solid var(--line); color: var(--text-dim); width: 30px; height: 30px; }

@@ -169,8 +169,12 @@ export function CanvasToolbar({ moveLocked, onMoveLocked, snap, onSnap }: { move
           <button
             className={`tb-btn ${snap ? 'is-on' : ''}`}
             onClick={onSnap}
-            title={snap ? 'Snapping to the grid: click to place tables, groups and notes freely' : 'Snap to grid: click so tables, groups and notes line up on the grid as you drag them'}
-            aria-label={snap ? 'Turn off snap to grid' : 'Snap to grid'}
+            title={
+              snap
+                ? 'Snapping: a dragged table or note lines up with the edges of the cards around it, or else with the grid; click to place them freely'
+                : 'Snap: click so a dragged table or note lines up with the edges of the cards around it, or else with the grid'
+            }
+            aria-label={snap ? 'Turn off snapping' : 'Snap while dragging'}
             aria-pressed={snap}
           >
             <Magnet size={15} />
